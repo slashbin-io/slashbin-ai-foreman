@@ -108,8 +108,11 @@ export async function runShip(config: AgentConfig): Promise<boolean> {
     return false;
   }
   const env = process.env;
+  // A top-level run is one session, or a parent plus one child (verify, qa-before-merge) run in turn, each killed at
+  // its maxDurationMs (src/session/runner.ts): so 3x the longest cap in play outlives any live run.
+  const longest = Math.max(config.reviewMaxDurationMs, ...config.repos.map((r) => r.maxDurationMs));
   return ship({
-    rows, reloadRows: read, clock: () => shipClock(process.env), nowMs, baseUrl: env[BASE_URL_ENV] || undefined, key: env[KEY_ENV] || undefined, watermarkKey: env[WATERMARK_KEY_ENV] || undefined,
+    staleRunAfterMs: 3 * longest, rows, reloadRows: read, clock: () => shipClock(process.env), nowMs, baseUrl: env[BASE_URL_ENV] || undefined, key: env[KEY_ENV] || undefined, watermarkKey: env[WATERMARK_KEY_ENV] || undefined,
     log: (line) => console.log(`metrics:ship: ${line}`),
   });
 }
