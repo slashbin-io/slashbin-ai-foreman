@@ -12,6 +12,8 @@ import { readBlocked, readBlockedRows, parseWindowEdge } from "../metrics/blocke
 import { readRuns, readSessionRows } from "../metrics/runs.js";
 import { BASE_URL_ENV, KEY_ENV, WATERMARK_KEY_ENV, ship, shipClock } from "../metrics/ship.js";
 import { spawnShipAfterRun } from "../session-run.js";
+import { SRE_VERIFY_MAX_DURATION_MS } from "./sre.js";
+import { QA_MAX_DURATION_MS } from "./qa.js";
 import type { ForemanPlugin, PluginContext, PluginCatalogEntry } from "./contract.js";
 
 /** The database file: `metrics.path` (`~` expanded), else `foreman-metrics.db` in the state directory. */
@@ -87,6 +89,15 @@ export async function runRuns(config: AgentConfig, argv: readonly string[] = pro
 }
 
 /**
+ * How old an unended started run must be before it no longer holds the watermark. A top-level run is one session, or
+ * a parent plus one child (verify, qa-before-merge) run in turn, each killed at its cap: the configured session caps
+ * (src/session/runner.ts) and the fixed SRE and QA ceilings. 3x the longest cap in play outlives any live run.
+ */
+export function staleRunAfterMs(config: Pick<AgentConfig, "reviewMaxDurationMs" | "repos">): number {
+  return 3 * Math.max(config.reviewMaxDurationMs, ...config.repos.map((r) => r.maxDurationMs), SRE_VERIFY_MAX_DURATION_MS, QA_MAX_DURATION_MS);
+}
+
+/**
  * `metrics:ship`: send each finished run (billable and failed, from `readRuns`) to the company-record receiver, then one
  * watermark event (src/metrics/ship.ts, docs/metrics.md). Exit 0 when sent, nothing to send, or the base URL or key is
  * unset (the outbox is the recovery copy); exit 1 when a send stops, the next run resends from the failed run.
@@ -108,11 +119,8 @@ export async function runShip(config: AgentConfig): Promise<boolean> {
     return false;
   }
   const env = process.env;
-  // A top-level run is one session, or a parent plus one child (verify, qa-before-merge) run in turn, each killed at
-  // its maxDurationMs (src/session/runner.ts): so 3x the longest cap in play outlives any live run.
-  const longest = Math.max(config.reviewMaxDurationMs, ...config.repos.map((r) => r.maxDurationMs));
   return ship({
-    staleRunAfterMs: 3 * longest, rows, reloadRows: read, clock: () => shipClock(process.env), nowMs, baseUrl: env[BASE_URL_ENV] || undefined, key: env[KEY_ENV] || undefined, watermarkKey: env[WATERMARK_KEY_ENV] || undefined,
+    staleRunAfterMs: staleRunAfterMs(config), rows, reloadRows: read, clock: () => shipClock(process.env), nowMs, baseUrl: env[BASE_URL_ENV] || undefined, key: env[KEY_ENV] || undefined, watermarkKey: env[WATERMARK_KEY_ENV] || undefined,
     log: (line) => console.log(`metrics:ship: ${line}`),
   });
 }
