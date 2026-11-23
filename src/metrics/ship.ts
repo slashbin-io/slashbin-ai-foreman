@@ -137,8 +137,12 @@ function repairTail(outbox: string): void {
   else truncateSync(outbox, Buffer.byteLength(text.slice(0, cut)));
 }
 
-/** The earliest start among top-level runs that started and have no end row: they hold the acknowledgement. */
-export function openRunStartMs(rows: readonly MetricsRow[]): number | null {
+/**
+ * The earliest start among top-level runs that started and have no end row: they hold the acknowledgement. A run
+ * started more than `staleAfterMs` before `nowMs` is dead (orphaned, e.g. by a restart) and holds nothing; it is
+ * counted in `stale` with the oldest one's id. `staleAfterMs` omitted: no run is stale.
+ */
+export function openRunHold(rows: readonly MetricsRow[], nowMs: number, staleAfterMs?: number): { startMs: number | null; stale: number; oldestStaleId: string | null } {
   const started = new Map<string, number>();
   const ended = new Set<string>();
   for (const r of rows) {
@@ -147,9 +151,17 @@ export function openRunStartMs(rows: readonly MetricsRow[]): number | null {
     if (d?.status === "started" && !d.parentRunId) { const t = Date.parse(r.at); const prev = started.get(id); if (prev === undefined || t < prev) started.set(id, t); }
     else if (d?.status === "finished" || d?.status === "failed") ended.add(id);
   }
-  let min: number | null = null;
-  for (const [id, t] of started) if (!ended.has(id) && (min === null || t < min)) min = t;
-  return min;
+  let min: number | null = null, stale = 0, oldest: [string, number] | null = null;
+  for (const [id, t] of started) {
+    if (ended.has(id)) continue;
+    if (staleAfterMs !== undefined && nowMs - t > staleAfterMs) { stale++; if (!oldest || t < oldest[1]) oldest = [id, t]; continue; }
+    if (min === null || t < min) min = t;
+  }
+  return { startMs: min, stale, oldestStaleId: oldest ? oldest[0] : null };
+}
+
+export function openRunStartMs(rows: readonly MetricsRow[], nowMs = 0, staleAfterMs?: number): number | null {
+  return openRunHold(rows, nowMs, staleAfterMs).startMs;
 }
 
 /** Billable and failed runs that ended before `nowMs`, ascending by end then runId (readRuns already sorts each list). */
@@ -162,6 +174,8 @@ export interface ShipOptions {
   dir?: string;
   rows: readonly MetricsRow[];
   nowMs: number;
+  /** A started run older than this has no end row for good (a restart orphaned it) and stops holding the watermark. */
+  staleRunAfterMs?: number;
   baseUrl?: string;
   key?: string;
   watermarkKey?: string;
@@ -234,7 +248,8 @@ async function shipLocked(o: ShipOptions, p: ReturnType<typeof shipPaths>, log: 
     // before its start. period_end is yesterday (Chicago); period_start is the day after the cursor, or on the first
     // run the earliest outboxed day, clamped to period_end, so a rejected watermark is spanned by the next one.
     const periodEnd = chicagoDay(chicagoDayStartMs(o.nowMs) - 1);
-    const open = openRunStartMs(o.rows);
+    const hold = openRunHold(o.rows, o.nowMs, o.staleRunAfterMs), open = hold.startMs;
+    if (hold.stale > 0) log(`${hold.stale} started run(s) with no end row older than ${o.staleRunAfterMs}ms ignored by the watermark; oldest ${hold.oldestStaleId}`);
     const ackMs = open === null ? o.nowMs : open - 1;
     let cursor = readState(p.state).watermark_acked_period_end ?? null;
     let periodStart: string | null = null;

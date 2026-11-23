@@ -5,7 +5,7 @@ import { createHmac } from "node:crypto";
 import { mkdtempSync, readFileSync, writeFileSync, mkdirSync, existsSync, utimesSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { ship, shippableRuns, openRunStartMs, shipPaths } from "../dist/metrics/ship.js";
+import { ship, shippableRuns, openRunStartMs, openRunHold, shipPaths } from "../dist/metrics/ship.js";
 
 const R = "o/r";
 const NOW = Date.parse("2026-11-10T18:00:00.123Z");
@@ -49,6 +49,37 @@ test("only completed and failed top-level runs ship, ascending by end", () => {
   ];
   assert.deepEqual(shippableRuns(rows, NOW).map((r) => r.runId), ["r2", "r1"]);
   assert.equal(openRunStartMs(rows), Date.parse("2026-11-09T12:00:00.000Z"));
+});
+
+test("a started run older than the stale bound does not hold the watermark; a live one does", () => {
+  const H = 3_600_000, bound = 3 * H;
+  const orphan = run(7, "2026-11-10T10:00:00.000Z", null), live = run(8, "2026-11-10T16:00:00.000Z", null);
+  assert.equal(openRunStartMs(orphan, NOW, bound), null);
+  assert.equal(openRunStartMs(live, NOW, bound), Date.parse("2026-11-10T16:00:00.000Z"));
+  assert.equal(openRunStartMs([...orphan, ...live], NOW, bound), Date.parse("2026-11-10T16:00:00.000Z"));
+  assert.deepEqual(openRunHold([...orphan, ...live, ...run(9, "2026-11-09T10:00:00.000Z", null)], NOW, bound), { startMs: Date.parse("2026-11-10T16:00:00.000Z"), stale: 2, oldestStaleId: "r9" });
+  assert.equal(openRunStartMs(orphan), Date.parse("2026-11-10T10:00:00.000Z")); // no bound: held as before
+});
+
+test("an orphaned run does not pin the shipped acknowledgement, and the skip is logged", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "ship-")), s = await stub(), lines = [];
+  try {
+    const rows = [...run(1, "2026-11-08T10:00:00.000Z", "2026-11-08T11:00:00.000Z"), ...run(2, "2026-11-09T09:34:00.000Z", null)];
+    assert.equal(await ship(opts(dir, rows, s, { staleRunAfterMs: 3 * 3_600_000, log: (l) => lines.push(l) })), true);
+    assert.equal(s.reqs.at(-1).json.acknowledged_through, "2026-11-10T18:00:00.123Z");
+    assert.equal(s.reqs.at(-1).json.period_end, "2026-11-09");
+    assert.ok(lines.some((l) => l.includes("oldest r2")));
+    assert.equal(state(dir).watermark_acked_period_end, "2026-11-09");
+  } finally { await s.close(); }
+});
+
+test("a live run inside the bound still holds the shipped acknowledgement", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "ship-")), s = await stub();
+  try {
+    const rows = [...run(1, "2026-11-08T10:00:00.000Z", "2026-11-08T11:00:00.000Z"), ...run(2, "2026-11-10T17:00:00.000Z", null)];
+    assert.equal(await ship(opts(dir, rows, s, { staleRunAfterMs: 3 * 3_600_000 })), true);
+    assert.equal(s.reqs.at(-1).json.acknowledged_through, "2026-11-10T16:59:59.999Z");
+  } finally { await s.close(); }
 });
 
 test("a 202 advances; the watermark follows the records and moves the cursor", async () => {
