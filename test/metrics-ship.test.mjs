@@ -262,3 +262,11 @@ test("a past day acknowledged short of its end is re-sent after the cursor has m
     assert.equal(s.reqs.filter((r) => r.source === "watermark").length, 0, "full-day ack: nothing re-sent");
   } finally { await s.close(); }
 });
+
+test("staleRunAfterMs: the fixed SRE and QA ceilings count, so a 61-minute verify run under 20-minute session caps is live", async () => {
+  const { staleRunAfterMs } = await import("../dist/plugins/metrics.js");
+  const bound = staleRunAfterMs({ reviewMaxDurationMs: 20 * 60_000, repos: [{ maxDurationMs: 20 * 60_000 }] });
+  assert.equal(bound, 3 * 90 * 60_000);
+  assert.ok(61 * 60_000 < bound);
+  assert.equal(staleRunAfterMs({ reviewMaxDurationMs: 4 * 60 * 60_000, repos: [] }), 3 * 4 * 60 * 60_000);
+});
