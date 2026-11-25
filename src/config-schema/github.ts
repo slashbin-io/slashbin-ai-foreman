@@ -80,13 +80,6 @@ export const githubConventionsSchema = z.object({
   // release-stage label). Failing while any is unsigned, passing once none is:
   // add it to the production branch's required checks to hold a human merge too.
   signoffStatusContext: name.default("foreman/em-sign-off"),
-  // A release ships the merges whose issues are signed off, and waits on none of the others (2026-11-24: two
-  // unsigned cards held signed ones about 15 h). On: the release PR's head is `releaseCutBranch`, rebuilt as
-  // the production branch plus a cherry-pick of every signed merge; an unsigned merge is never on it. A merge
-  // that cannot be picked cleanly leaves the cut as it was and the release waits (fails closed). Off: the
-  // release PR's head is the base branch and one unsigned issue holds all of it.
-  releaseSignedOnly: z.boolean().default(false),
-  releaseCutBranch: name.default("release-cut"),
   // The last line of every PR body the Foreman writes. Empty writes none. No
   // "#<number>": every #N in a promotion PR's body is read as an issue it carries.
   signature: z.string().trim()

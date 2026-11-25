@@ -13,7 +13,6 @@ import { trySkillDeliver } from "./phases/skill-deliver.js";
 import { tryFileDependencyBatchIssue, tryPromotion, trySyncDrift } from "./phases/promote.js";
 import { runReconcileStage } from "./phases/reconcile.js";
 import { tryRelease } from "./phases/release.js";
-import { releaseView, releaseViewWithCut } from "./release-view.js";
 import { tryUnstick } from "./phases/unstick.js";
 import { tryReview } from "./phases/review.js";
 import { tryRevision } from "./phases/revise.js";
@@ -395,9 +394,7 @@ async function runStage(
     //    the issue labels are the record. ---
     case "promote": {
       const releaseActive = hasStage(config.stages, "release") && releaseStageReady(config);
-      const view = await releaseViewWithCut(repoConfig, base);
-      if (!view) break;
-      const promotionResult = await tryPromotion(rt, view, base, cycleNumber, releaseActive);
+      const promotionResult = await tryPromotion(rt, repoConfig, base, cycleNumber, releaseActive);
       if (promotionResult === "promoted" || promotionResult === "synced") processed++;
       break;
     }
@@ -406,7 +403,7 @@ async function runStage(
     //    tag, prod verification, close or hold, soak. No Discord message on
     //    any outcome; a no-op without srePath and techLeadPath. ---
     case "release":
-      if (await tryRelease(rt, releaseView(repoConfig), config, base, cycleNumber)) processed++;
+      if (await tryRelease(rt, repoConfig, config, base, cycleNumber)) processed++;
       break;
 
     // --- Ask the EM to unstick stuck work (foreman#103): holds, escalations,

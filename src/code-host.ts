@@ -595,9 +595,6 @@ export interface CodeHost {
   adoptCarried(repoConfig: RepoConfig, authorized: ReadonlySet<number>, logger: Logger): Promise<ReleaseCarry>;
   noteCarried(repoConfig: RepoConfig, carry: ReleaseCarry, releasePr: number, authorized: number[], logger: Logger): Promise<void>;
 
-  /** Rebuild the signed-only release cut (`github.releaseSignedOnly`); never throws. */
-  cutRelease(config: RepoConfig, logger: Logger): Promise<{ kind: "built"; sha: string; picked: number[]; held: number[] } | { kind: "unchanged" } | { kind: "failed"; reason: string }>;
-
   // Release sign-off.
   foremanAppliedOrHold(config: RepoConfig, logger: Logger): (n: number) => Promise<boolean>;
   syncSignoff(config: RepoConfig, pr: number, headSha: string, unsigned: number[], logger: Logger, unresolved?: number[], dark?: readonly number[]): Promise<void>;

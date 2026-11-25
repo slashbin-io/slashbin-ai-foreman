@@ -108,18 +108,6 @@ Reconcile → Review → Verify → Promote → Release → Revise → Implement
    the release PR head with one comment naming the unsigned issues, and asks neither the Tech Lead to
    approve nor the SRE to merge. Every pass recomputes it, so it turns green once the last issue is
    signed. Make that context a required check on the production branch to hold a human merge too.
-   **Signed-only release (`github.releaseSignedOnly`, default off).** The gate above is per issue but the
-   release PR carries all of `develop`, so one unsigned issue held every signed one behind it (2026-11-24:
-   two unsigned cards held two signed ones about 15 h). With the flag on, the release PR's head is
-   `github.releaseCutBranch` (default `release-cut`), rebuilt by the Promote stage as the production branch plus
-   a cherry-pick of every merge on `develop` whose issues are all signed, in `develop`'s order. An unsigned
-   merge is never on it, so the gate and the release see only signed work. A merge already on production is
-   not picked twice. A signed merge that does not apply without an unsigned one before it, or any failed
-   read, leaves the cut as it was and the release waits (logged; never promotes on a guess). Turning it on:
-   close any open release PR headed `develop` first. Cost: the production branch carries cherry-picks, so the
-   main to develop sync can conflict where develop later edited the same lines. Dark-flag shipping
-   (`withoutDark`) is not applied on the cut: an unsigned dark issue waits for its sign-off like any other.
-   Code: `src/github/release-cut.ts`, `src/release-view.ts`.
    Code: `src/phases/release.ts`, `src/github/release-carry.ts`, `src/github/release-signoff.ts`.
 6. **Revise** — finds PRs with pending review feedback (`pr pending actions`) and
    revises them, ahead of new work. A PR that keeps being sent back is held for a

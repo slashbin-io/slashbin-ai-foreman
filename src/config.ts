@@ -550,8 +550,6 @@ export interface RepoConfig {
   githubRepo: string;
   triggerLabel: string;
   baseBranch: string;
-  /** Set only on the release view (`releaseView`): the real base branch, while `baseBranch` names the signed-only cut. */
-  developBranch?: string;
   /** Branch promotion PRs target; sync PRs merge it back into baseBranch. */
   productionBranch: string;
   /** LEGACY (#208): a head equal to it is still Foreman-owned; nothing new is pushed to it. */

@@ -250,7 +250,7 @@ export async function netZeroOffProduction(config: RepoConfig, issues: number[],
   if (issues.length === 0) return out;
   // Not the shared merged-PR scan: it turns a failed read into "no PRs found", which here would read as "not net-zero"
   // and let the issue join. This read throws, and the window is wide enough for a release's worth of merges.
-  const listed = JSON.parse((await ghAsync(["pr", "list", "--repo", config.githubRepo, "--state", "merged", "--base", config.developBranch ?? config.baseBranch,
+  const listed = JSON.parse((await ghAsync(["pr", "list", "--repo", config.githubRepo, "--state", "merged", "--base", config.baseBranch,
     "--json", "number,url,title,body,commits,mergedAt", "--limit", String(MERGED_PR_WINDOW)], config.repoPath)) || "[]") as
     { number: number; url: string; title?: string; body?: string; commits?: PrCommit[]; mergedAt?: string }[];
   const wanted = new Set(issues);
