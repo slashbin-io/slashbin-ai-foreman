@@ -13,6 +13,8 @@ export interface ReconciliationResult {
   error?: string;
   /** Branches the reconciler refused to recreate a PR for — see `RejectedBranch`. */
   rejected?: RejectedBranch[];
+  /** `origin/<baseBranch>` as this pass's fetch left it (40-char sha); null when the fetch failed or the ref could not be read. */
+  baseHead: string | null;
 }
 
 /**
@@ -283,9 +285,28 @@ export async function reconcileRepo(
     } else {
       logger.warn("git fetch failed, skipping reconciliation", { repo: config.name, ...failure });
     }
-    return { reconciled: false, issueNumbers: [], commitCount: 0 };
+    return { reconciled: false, issueNumbers: [], commitCount: 0, baseHead: null };
   }
 
+  const baseHead = await readBaseHead(config);
+  return { ...(await reconcileOwnedBranches(config, logger)), baseHead };
+}
+
+/** `origin/<baseBranch>` after a fetch, as a full sha; null when it cannot be read. */
+async function readBaseHead(config: RepoConfig): Promise<string | null> {
+  try {
+    const sha = (await gitAsync(["rev-parse", "--verify", `refs/remotes/origin/${config.baseBranch}^{commit}`], config.repoPath)).trim();
+    return /^[0-9a-f]{40}$/.test(sha) ? sha : null;
+  } catch {
+    return null;
+  }
+}
+
+/** The orphaned-commit scan of the Foreman-owned heads, after `reconcileRepo`'s fetch. */
+async function reconcileOwnedBranches(
+  config: RepoConfig,
+  logger: Logger,
+): Promise<Omit<ReconciliationResult, "baseHead">> {
   // Only Foreman-owned heads are scanned (per-issue branches, plus the legacy shared one).
   const featureBranches = await getRemoteOwnedBranches(config);
   if (featureBranches.length === 0) {

@@ -94,6 +94,16 @@ export type PromotionApproval =
   /** It could not run, an error, a timeout: ask again later. */
   | { kind: "retry"; reason: string };
 
+/** The reviewer's verdict on commits that landed on the base branch. */
+export type LandedVerdict = "COVERED" | "APPROVE" | "REQUEST_CHANGES";
+
+/** How a reviewer answered a landed-range review. */
+export type LandedReview =
+  /** The range `from..to` was judged: approved PRs cover it (COVERED), or its review approved or asked for changes. */
+  | { kind: "checked"; verdict: LandedVerdict }
+  /** No verdict for this range (it could not run, a usage error, a failed write, a timeout, a trailer for another range): ask again later. */
+  | { kind: "retry"; reason: string };
+
 export interface Reviewer {
   /**
    * Review (and merge) one PR. `noMerge` approves and stops; `mergeApprovedSha`
@@ -110,6 +120,14 @@ export interface Reviewer {
     repo: RepoConfig, config: AgentConfig, pr: number, sha: string, logger: Logger,
     abortSignal?: AbortSignal, transcriptPath?: string,
   ): Promise<PromotionApproval>;
+  /**
+   * Judge the commits `from..to` (full shas) that landed on the repo's base branch: whether approved PRs cover them,
+   * and when not, a review of the range. The provenance rule is the reviewer's; the caller only reads the verdict.
+   */
+  reviewLanded(
+    repo: RepoConfig, config: AgentConfig, from: string, to: string, logger: Logger,
+    abortSignal?: AbortSignal, transcriptPath?: string,
+  ): Promise<LandedReview>;
 }
 
 /** Errors a verifier excluded from a verification, with the evidence links beside them. */

@@ -7,8 +7,8 @@ import { recordContractPath } from "../contract/usage.js";
 import { setContractReaderEnv } from "../handoff-contract.js";
 import { milestoneReader, withoutProgressLines, type ReviewMilestone } from "../review-progress.js";
 import { isTransientGhError } from "../github/gh.js";
-import { cliTail, refusalReason, parseReviewTrailerRecords, runAgentCli } from "./agent-cli.js";
-import type { ForemanPlugin, PromotionApproval, Reviewer, ReviewFallback, PluginCatalogEntry } from "./contract.js";
+import { cliTail, lastLine, refusalReason, parseReviewTrailerRecords, runAgentCli } from "./agent-cli.js";
+import type { ForemanPlugin, LandedReview, LandedVerdict, PromotionApproval, Reviewer, ReviewFallback, PluginCatalogEntry } from "./contract.js";
 
 /**
  * The Tech Lead (slashbin_ai_tech_lead, EM#427) as the reviewer
@@ -194,6 +194,44 @@ export async function approvePromotionViaTechLead(
   return { kind: "retry", reason: `exit ${r.code}: ${cliTail(r)}` };
 }
 
+const LANDED_TRAILER = /^TECHLEAD_LANDED from=([0-9a-f]{40}) to=([0-9a-f]{40}) verdict=(COVERED|APPROVE|REQUEST_CHANGES)(?: posted=(?:true|false))?$/;
+
+/**
+ * The verdict of a `review-landed` run's last line, only when it names exactly `from..to`; null for any other line
+ * (absent, malformed, or another range). Pure, exported for tests.
+ */
+export function parseLandedTrailer(line: string, from: string, to: string): LandedVerdict | null {
+  const m = LANDED_TRAILER.exec(line.trim());
+  return m && m[1] === from && m[2] === to ? (m[3] as LandedVerdict) : null;
+}
+
+/**
+ * Ask the Tech Lead about commits `from..to` that landed on the base branch (`tech-lead.mjs review-landed`). The
+ * provenance rule and the review are the Tech Lead's. Exit 0 with a `TECHLEAD_LANDED` last line for exactly this
+ * range is a verdict; anything else (exit 1, 2, 3, a timeout, a trailer for another range) is retry.
+ */
+export async function reviewLandedViaTechLead(
+  repoConfig: RepoConfig,
+  agentConfig: AgentConfig,
+  from: string,
+  to: string,
+  logger: Logger,
+  abortSignal?: AbortSignal,
+  transcriptPath?: string,
+): Promise<LandedReview> {
+  const techLead = agentConfig.techLeadPath;
+  if (!techLead) return { kind: "retry", reason: "techLeadPath not configured" };
+  if (!process.env.TECHLEAD_GITHUB_KEY) return { kind: "retry", reason: "TECHLEAD_GITHUB_KEY not set — refusing a landed review without Tech Lead attribution" };
+  logger.info(`Asking the Tech Lead to review ${repoConfig.githubRepo} ${repoConfig.baseBranch} ${from.slice(0, 10)}..${to.slice(0, 10)}`);
+  const r = await runAgentCli(techLead, "bin/tech-lead.mjs",
+    ["review-landed", "--repo", repoConfig.githubRepo, "--base", repoConfig.baseBranch, "--from", from, "--to", to],
+    buildTechLeadEnv(agentConfig, repoConfig), agentConfig, TECH_LEAD_APPROVE_MAX_DURATION_MS, abortSignal, transcriptPath);
+  if (r.timedOut) return { kind: "retry", reason: "Tech Lead landed review timed out" };
+  if (r.code !== 0) return { kind: "retry", reason: `exit ${r.code}: ${cliTail(r)}` };
+  const verdict = parseLandedTrailer(lastLine(r), from, to);
+  return verdict ? { kind: "checked", verdict } : { kind: "retry", reason: `no TECHLEAD_LANDED trailer for this range: ${lastLine(r).slice(0, 200)}` };
+}
+
 export class TechLeadPlugin implements ForemanPlugin {
   readonly id = "tech-lead";
   readonly roles = ["reviewer"] as const;
@@ -204,7 +242,7 @@ export class TechLeadPlugin implements ForemanPlugin {
     requires: { config: ["techLeadPath", "reviewEnabled"], env: ["TECHLEAD_GITHUB_KEY"] },
     whenOff: "No automated review: each PR waits for a person to review and merge it, and the Foreman records the merge and carries on. The release stage cannot run (it needs a reviewer and a deployer), so a release PR waits for a person.",
   };
-  readonly reviewer: Reviewer = { reviewPr: reviewViaTechLead, approvePromotion: approvePromotionViaTechLead };
+  readonly reviewer: Reviewer = { reviewPr: reviewViaTechLead, approvePromotion: approvePromotionViaTechLead, reviewLanded: reviewLandedViaTechLead };
   enabled(config: AgentConfig): boolean {
     return Boolean(config.techLeadPath);
   }

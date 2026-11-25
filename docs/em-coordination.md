@@ -161,7 +161,7 @@ blocker fixed, then nothing — the next poll picks it up.
 The `unstick` stage asks the EM plugin (`src/plugins/em.ts`, which runs `bin/em.mjs unstick`) about each stuck item, by kind (`UNSTICK_KINDS`,
 `src/unstick.ts`): `skip`, `divergence`, `verify-held`, `verify-exhausted`, `verify-no-pr`,
 `revision-exhausted`, `revision-stalemate`, `needs-ruling`, `dead-zone`, `deploy-failed`,
-`release-gate`, `rework-decision`, `unrelated-error`, `epic-ready-to-close`, `dependency-batch-loop`, `unlinked-fix`, `epic-decompose`, `corrective-chain`, `check-defect`. Verify holds become candidates only after their attempts are spent,
+`release-gate`, `rework-decision`, `unrelated-error`, `epic-ready-to-close`, `dependency-batch-loop`, `unlinked-fix`, `epic-decompose`, `corrective-chain`, `check-defect`, `landed-changes-requested`. Verify holds become candidates only after their attempts are spent,
 except `rework-decision`: the first visual QA FAIL, or the first charged verification failure that returned a
 verdict, is called in the same cycle, with the PR, the files it touched, the verdict and the evidence links in
 the reason. It is one call per failure (a retry that fails the same way keeps the first evidence); a charged
@@ -197,6 +197,14 @@ has a third corrective: a same-repo issue #N is blocked by, filed after #N's PR 
 (`dedupeKey` `chain`). From then the Foreman builds no corrective for #N; they queue behind it. The EM switches #N
 off (a `Dark flag`, so it stops holding the release) or redesigns the remaining work as one issue (#353:
 nine correctives in 24 hours held its release).
+`landed-changes-requested` fires when commits reach a lane repo's base branch without an approved PR and the Tech Lead's
+range review asks for changes (dark behind `FOREMAN_LANDED_REVIEW`, off unless set: off, it reads, calls and writes nothing;
+slashbin-ai-foreman#393). The reconcile stage, last, compares `origin/<baseBranch>` after its fetch with the repo record's
+`landedHead`. With none it records the head and asks nothing (no backfill). When they differ it runs the Tech Lead's
+`review-landed --repo --base --from <landedHead> --to <head>` once per range; the Tech Lead owns the provenance rule. COVERED or
+APPROVE records the head. REQUEST_CHANGES raises one notice (subject 0, `dedupeKey` `<from>..<to>`), then records the head, then
+posts one warn event. Any other outcome (exit 1/2/3, the 20-minute timeout, a trailer for another range) leaves the record and asks
+again next pass. The base branch is never blocked; the EM files the corrective. The EM accepts the kind before the flag is set.
 `check-defect` fires when one verifier check defers dev verification on two different PRs (dark behind `FOREMAN_CHECK_DEFECT`,
 off unless set: off, it writes and raises nothing; slashbin-ai-foreman#366). Failed verdicts never count: they are findings about the
 change. Its subject is the lowest affected issue, `dedupeKey` the check id (`<owner/repo>:<slug>`) plus the sorted affected list, so a newly
