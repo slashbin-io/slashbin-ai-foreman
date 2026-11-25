@@ -567,6 +567,11 @@ export interface CodeHost {
    */
   correctorsOf(config: RepoConfig, holder: number, logger: Logger): Promise<number[]>;
   /**
+   * Whether an issue in another repo that `holder` is blocked by closed as completed after `since` (epoch ms): a cross-repo
+   * blocker releases a hold exactly as a same-repo corrective's merge does. Throws when a link cannot be read.
+   */
+  foreignBlockerClosedSince(config: RepoConfig, holder: number, since: number): Promise<boolean>;
+  /**
    * The correctives filed against `holder` since its PR `prNumber` merged (the issues it is blocked by, created after
    * the merge), ascending. Throws when a link cannot be read.
    */

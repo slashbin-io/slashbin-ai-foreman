@@ -19,6 +19,10 @@ export interface Blocker {
   repository_url?: string;
   /** ISO time the blocking issue was created. */
   created_at?: string;
+  /** Why a closed blocker closed: `completed` is the only reason that means the work landed. */
+  state_reason?: string | null;
+  /** ISO time the blocking issue closed. */
+  closed_at?: string | null;
 }
 
 /** The lifecycle labels that mean the issue's PR has merged to the base branch, or gone further. */

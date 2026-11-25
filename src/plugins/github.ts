@@ -142,6 +142,7 @@ export function githubCodeHost(
     readIssueState: readiness.readIssueState,
     relationsOf: corrections.relationsOf,
     correctorsOf: corrections.correctorsOf,
+    foreignBlockerClosedSince: corrections.foreignBlockerClosedSince,
     correctivesOf: corrections.correctivesOf,
     darkIssues: darkFlag.darkIssues,
     markShippedDark: darkFlag.markShippedDark,
