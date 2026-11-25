@@ -13,7 +13,7 @@ import { mkdtempSync, writeFileSync, chmodSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { registerPlugin, roleFor, qaFor, enabledFor } from "../dist/plugins/registry.js";
-import { TechLeadPlugin, reviewViaTechLead, approvePromotionViaTechLead } from "../dist/plugins/tech-lead.js";
+import { TechLeadPlugin, reviewViaTechLead, approvePromotionViaTechLead, reviewLandedViaTechLead } from "../dist/plugins/tech-lead.js";
 import { SrePlugin, verifyViaSre, verifyProdViaSre, deployViaSre } from "../dist/plugins/sre.js";
 import { QaPlugin } from "../dist/plugins/qa.js";
 import { EmPlugin, unstickViaEm } from "../dist/plugins/em.js";
@@ -53,6 +53,7 @@ test("each agent plugin is on exactly when its path key is set, and fills its ro
   const tl = new TechLeadPlugin(), sre = new SrePlugin(), em = new EmPlugin();
   assert.equal(tl.reviewer.reviewPr, reviewViaTechLead);
   assert.equal(tl.reviewer.approvePromotion, approvePromotionViaTechLead);
+  assert.equal(tl.reviewer.reviewLanded, reviewLandedViaTechLead);
   assert.equal(sre.verifier.verifyDev, verifyViaSre);
   assert.equal(sre.verifier.verifyProd, verifyProdViaSre);
   assert.equal(sre.deployer.deploy, deployViaSre);

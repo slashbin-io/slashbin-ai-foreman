@@ -172,6 +172,20 @@ export async function notifyOnce(
 /** Process-wide: the shutdown drain aborts every run in the process, whichever runtime started it. */
 export const activeRuns = new Map<AbortController, string>();
 
+/**
+ * Run `fn` as one of `repoName`'s in-flight runs: registered in `activeRuns` while it runs, so a shutdown whose drain
+ * window elapsed aborts it through the signal; unregistered on success or failure. Its result or rejection is `fn`'s.
+ */
+export async function asActiveRun<T>(repoName: string, fn: (signal: AbortSignal) => Promise<T>): Promise<T> {
+  const ac = new AbortController();
+  activeRuns.set(ac, repoName);
+  try {
+    return await fn(ac.signal);
+  } finally {
+    activeRuns.delete(ac);
+  }
+}
+
 // A PR sent back this many times is probably not converging: each round answers
 // the last finding and the reviewer finds a new one in the answer. The retry cap
 // above counts only FAILED revisions, so a spiral of successful ones was silent —

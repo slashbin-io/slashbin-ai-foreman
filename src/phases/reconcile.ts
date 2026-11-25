@@ -6,6 +6,7 @@ import type { Logger } from "../logger.js";
 import { emit, advance } from "../work-source.js";
 import { reviewMove } from "../lifecycle.js";
 import { reconcileRepo } from "../reconciler.js";
+import { reviewLandedRange } from "./landed-range.js";
 import { roleFor } from "../plugins/registry.js";
 import { hasStage } from "../stages.js";
 import { QA_PENDING_HOLD, type ReviewTrailer } from "../session/protocol.js";
@@ -241,8 +242,10 @@ export async function runReconcileStage(
 ): Promise<number> {
   let processed = 0;
   const reconLogger = base.child({ phase: "reconcile" });
+  let baseHead: string | null = null;
   try {
     const result = await reconcileRepo(repoConfig, reconLogger);
+    baseHead = result.baseHead;
     if (result.reconciled) {
       // reconcileRepo opened a PR for orphaned commits; report its linked items
       // as in review so the Review phase's gate sees it. Immediately after the
@@ -442,6 +445,10 @@ export async function runReconcileStage(
       `Dead-zone detection failed for ${repoConfig.name}: ${err instanceof Error ? err.message : String(err)}`,
     );
   }
+
+  // Last: commits that reached the base branch without an approved PR (#393). Dark behind FOREMAN_LANDED_REVIEW;
+  // never throws, and a null baseHead (the fetch failed) skips it.
+  await reviewLandedRange(rt, repoConfig, config, baseHead, reconLogger, events);
 
   return processed;
 }

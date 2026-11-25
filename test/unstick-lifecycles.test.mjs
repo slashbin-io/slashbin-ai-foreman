@@ -38,7 +38,7 @@ const noticeAlert = { kind: "unrelated-error", subject: 0, dedupeKey: "o/lc#5:si
 test("every kind declares exactly one lifecycle, and the table names no other kind", () => {
   for (const k of UNSTICK_KINDS) assert.ok(["notice", "handoff", "blocker"].includes(lifecycleOf(k)), k);
   assert.deepEqual(Object.keys(UNSTICK_LIFECYCLES).sort(), [...UNSTICK_KINDS].sort());
-  assert.deepEqual(UNSTICK_KINDS.filter((k) => lifecycleOf(k) === "notice").sort(), ["epic-ready-to-close", "unrelated-error"]);
+  assert.deepEqual(UNSTICK_KINDS.filter((k) => lifecycleOf(k) === "notice").sort(), ["epic-ready-to-close", "landed-changes-requested", "unrelated-error"]);
   assert.deepEqual(UNSTICK_KINDS.filter((k) => lifecycleOf(k) === "handoff"), ["release-gate"]);
 });
 

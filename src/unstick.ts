@@ -52,6 +52,7 @@ export const UNSTICK_KINDS = [
   "corrective-chain",
   "check-defect",
   "stalled",
+  "landed-changes-requested",
 ] as const;
 export type UnstickKind = (typeof UNSTICK_KINDS)[number];
 
@@ -87,6 +88,7 @@ export const UNSTICK_LIFECYCLES: Readonly<Record<UnstickKind, UnstickLifecycle>>
   "corrective-chain": "blocker",
   "check-defect": "blocker",
   stalled: "blocker",
+  "landed-changes-requested": "notice",
 };
 
 export const lifecycleOf = (kind: UnstickKind): UnstickLifecycle => UNSTICK_LIFECYCLES[kind];
@@ -175,7 +177,7 @@ export const unstickKey = (issue: number, kind: UnstickKind, tag?: string): stri
 /** The kinds only an event can report: there is no persisted condition to read them from. */
 /** Immutable constant (not state): the kinds only an event can report. */
 export const EVENT_KINDS: ReadonlySet<UnstickKind> = new Set<UnstickKind>([
-  "needs-ruling", "dead-zone", "revision-exhausted", "revision-stalemate", "verify-held", "unrelated-error", "epic-ready-to-close", "dependency-batch-loop", "unlinked-fix", "epic-decompose", "corrective-chain", "check-defect", "stalled",
+  "needs-ruling", "dead-zone", "revision-exhausted", "revision-stalemate", "verify-held", "unrelated-error", "epic-ready-to-close", "dependency-batch-loop", "unlinked-fix", "epic-decompose", "corrective-chain", "check-defect", "stalled", "landed-changes-requested",
 ]);
 
 /** The reason the release-gate call carries: stable, so one `pr approved` costs one call. */
