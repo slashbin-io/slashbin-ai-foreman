@@ -32,7 +32,7 @@ import { fieldTable, type RepoRecord } from "../issue-records.js";
 import { isUpstreamBlocked, reportRunResult, tryAcquire } from "../upstream-backoff.js";
 import { backoffDelay } from "../backoff.js";
 import { EVENT_KINDS, lifecycleOf, noticeHandled, noticeTaken, nextDecompose, decomposeInFlight, releaseGateCandidateReason, UNSTICK_MAX_ATTEMPTS, SPENT_QUESTION_REARM, handoffGiveUpComment, unstickGiveUpComment, derivedCandidates, nextStep, openEntry, unstickKey, type DecomposeCandidate, type UnstickCandidate, type UnstickEntry } from "../unstick.js";
-import { activeRuns } from "./common.js";
+import { asActiveRun } from "./common.js";
 import { report as reportStall, resolve as resolveStall, sweep as sweepStalls, unresolvedStalls, stallClockEnabled } from "../stall-clock.js";
 import { isDeployFailureHold } from "./verify.js";
 import { codeHost } from "../plugins/registry.js";
@@ -397,15 +397,8 @@ export async function tryUnstick(
       }
       // The EM's runner is paused by a refusal (this pass, an earlier one, another repo's): no call until it lifts.
       if (!tryAcquire(EM_UPSTREAM)) continue;
-      const ac = new AbortController();
-      activeRuns.set(ac, repoName);
-      let outcome: UnstickOutcome;
-      try {
-        outcome = await unsticker.unstick(where, config, c.issue, c.kind, c.reason, log, ac.signal,
-          transcript(repoConfig, `${c.kind}-${c.issue}`, cycleNumber));
-      } finally {
-        activeRuns.delete(ac);
-      }
+      const outcome: UnstickOutcome = await asActiveRun(repoName, (signal) => unsticker.unstick(where, config, c.issue, c.kind, c.reason, log,
+        signal, transcript(repoConfig, `${c.kind}-${c.issue}`, cycleNumber)));
       calls++;
       const refused = outcome.kind === "refused" ? outcome : undefined;
       reportRunResult(EM_UPSTREAM, !!refused, refused?.detail, refused?.resetAtMs);

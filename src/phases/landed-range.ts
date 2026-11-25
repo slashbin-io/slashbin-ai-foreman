@@ -8,10 +8,9 @@
 import type { AgentConfig, RepoConfig } from "../config.js";
 import type { Logger } from "../logger.js";
 import type { ForemanRuntime } from "../runtime.js";
-import type { LandedReview } from "../plugins/contract.js";
 import { roleFor } from "../plugins/registry.js";
 import { HandoffNotSaved } from "../unstick.js";
-import { activeRuns, type CycleEvent } from "./common.js";
+import { asActiveRun, type CycleEvent } from "./common.js";
 
 /** Whether the dark flag is on. Process-wide: read from the environment at each call, so a restart is the switch. */
 export function landedReviewEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
@@ -74,7 +73,7 @@ export async function reviewLandedRange(
     if (from === baseHead) return "unchanged";
     const to = baseHead;
 
-    const review = await asRun(repoConfig, (signal) => reviewer.reviewLanded(repoConfig, config, from, to, logger, signal));
+    const review = await asActiveRun(repoConfig.name, (signal) => reviewer.reviewLanded(repoConfig, config, from, to, logger, signal));
     if (review.kind === "retry") {
       logger.warn(`${repoConfig.githubRepo}: landed review of ${from.slice(0, 10)}..${to.slice(0, 10)} gave no verdict (${review.reason}); retried next pass`);
       return "retry";
@@ -112,16 +111,5 @@ export async function reviewLandedRange(
   } catch (err) {
     logger.warn(`${repoConfig.githubRepo}: landed review failed (${err instanceof Error ? err.message.split("\n")[0] : String(err)}); retried next pass`);
     return "retry";
-  }
-}
-
-/** Run the reviewer as this repo's in-flight run, so a shutdown whose drain window elapsed aborts it. */
-async function asRun(repoConfig: RepoConfig, fn: (signal: AbortSignal) => Promise<LandedReview>): Promise<LandedReview> {
-  const ac = new AbortController();
-  activeRuns.set(ac, repoConfig.name);
-  try {
-    return await fn(ac.signal);
-  } finally {
-    activeRuns.delete(ac);
   }
 }

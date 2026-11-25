@@ -250,3 +250,19 @@ test("parseLandedTrailer matches only this range and a known verdict", () => {
   assert.equal(parseLandedTrailer(`TECHLEAD_LANDED from=${A} to=${B} verdict=MAYBE`, A, B), null);
   assert.equal(parseLandedTrailer("", A, B), null);
 });
+
+test("asActiveRun: registered while it runs with the controller's signal, gone after success or failure", async () => {
+  const { asActiveRun, activeRuns } = await import("../dist/phases/common.js");
+  const before = activeRuns.size;
+  const got = await asActiveRun("r", async (signal) => {
+    const mine = [...activeRuns].find(([ac, name]) => ac.signal === signal && name === "r");
+    assert.ok(mine, "registered under the repo name with its own signal");
+    mine[0].abort();
+    assert.equal(signal.aborted, true);
+    return 7;
+  });
+  assert.equal(got, 7);
+  assert.equal(activeRuns.size, before);
+  await assert.rejects(asActiveRun("r", async () => { throw new Error("boom"); }), /boom/);
+  assert.equal(activeRuns.size, before);
+});

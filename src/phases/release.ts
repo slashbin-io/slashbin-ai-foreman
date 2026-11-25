@@ -45,7 +45,7 @@ import { releaseIssues } from "../release-tracker.js";
 import type { IssueRecord, PredeployStop, ProdRelease, ReleaseReadHold } from "../issue-records.js";
 import { fieldTable } from "../issue-records.js";
 import { BackoffTracker, backoffDelay, formatWait } from "../backoff.js";
-import { activeRuns, itemOf } from "./common.js";
+import { asActiveRun, itemOf } from "./common.js";
 import { epicChildClosedAlert, type UnstickKind } from "../unstick.js";
 import { verifyHoldPlan } from "./verify.js";
 import { followRelease } from "./promote.js";
@@ -235,15 +235,7 @@ function transcript(repoConfig: RepoConfig, what: string, cycleNumber: number): 
 }
 
 /** Run one Tech Lead / SRE subprocess as this repo's in-flight run, so a shutdown aborts it. */
-async function asRun<T>(repoConfig: RepoConfig, fn: (signal: AbortSignal) => Promise<T>): Promise<T> {
-  const ac = new AbortController();
-  activeRuns.set(ac, repoConfig.name);
-  try {
-    return await fn(ac.signal);
-  } finally {
-    activeRuns.delete(ac);
-  }
-}
+const asRun = <T>(repoConfig: RepoConfig, fn: (signal: AbortSignal) => Promise<T>): Promise<T> => asActiveRun(repoConfig.name, fn);
 
 /** Tag the release's merge commit once; a failure is logged and retried with the release's next step. */
 async function tagRelease(repoConfig: RepoConfig, rel: ProdRelease, logger: Logger): Promise<void> {
