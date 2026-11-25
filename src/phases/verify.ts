@@ -125,6 +125,8 @@ export async function correctionMergedSince(repoConfig: RepoConfig, holder: numb
   let fixes: number[];
   try {
     fixes = await codeHost().correctorsOf(repoConfig, holder, logger);
+    // A blocker in another repo is a corrective too: its closing as completed is its merge.
+    if (await codeHost().foreignBlockerClosedSince(repoConfig, holder, since)) return true;
   } catch (err) {
     logger.warn(`#${holder}: its corrections could not be read (${(err instanceof Error ? err.message : String(err)).split("\n")[0]}) — a merged fix is not known`);
     return undefined;

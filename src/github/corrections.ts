@@ -113,3 +113,18 @@ export async function correctivesOf(config: RepoConfig, holder: number, prNumber
   const after = (await blockersOf(config.githubRepo, holder, config.repoPath)).filter((b) => Date.parse(b.created_at ?? "") > mergedAt);
   return (await keepOwn(after, config)).sort((a, b) => a - b);
 }
+
+/**
+ * Whether an issue of ANOTHER repo that `holder` is "blocked by" closed as completed after `since`. `correctorsOf` keeps this
+ * repo's rows only (a number means nothing in another repo), so a hold on a cross-repo blocker (a service card blocked by
+ * an issue in another repo, 2026-11-24) was never released: it waited 4.5 h for a hand-written ruling after the blocker closed. A foreign
+ * blocker counts exactly as a same-repo one: it releases when it closes as completed, not when it is dropped as not planned.
+ * Throws when the link cannot be read: the caller treats that as unknown.
+ */
+export async function foreignBlockerClosedSince(config: RepoConfig, holder: number, since: number): Promise<boolean> {
+  for (const b of await blockersOf(config.githubRepo, holder, config.repoPath)) {
+    if (await isOwnRow(b.repository_url, config.githubRepo, config.repoPath)) continue;
+    if (b.state === "closed" && b.state_reason === "completed" && Date.parse(b.closed_at ?? "") > since) return true;
+  }
+  return false;
+}

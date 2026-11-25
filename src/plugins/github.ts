@@ -15,6 +15,7 @@ import * as prs from "../github/pr.js";
 import * as promotion from "../github/promotion.js";
 import * as readiness from "../github/readiness.js";
 import * as releaseCarry from "../github/release-carry.js";
+import * as releaseCut from "../github/release-cut.js";
 import * as releaseSignoff from "../github/release-signoff.js";
 import * as release from "../github/release.js";
 import * as reports from "../github/reports.js";
@@ -142,6 +143,7 @@ export function githubCodeHost(
     readIssueState: readiness.readIssueState,
     relationsOf: corrections.relationsOf,
     correctorsOf: corrections.correctorsOf,
+    foreignBlockerClosedSince: corrections.foreignBlockerClosedSince,
     correctivesOf: corrections.correctivesOf,
     darkIssues: darkFlag.darkIssues,
     markShippedDark: darkFlag.markShippedDark,
@@ -149,6 +151,8 @@ export function githubCodeHost(
     checkDefectOf: checkDefects.checkDefectOf,
     adoptCarried: releaseCarry.adoptCarried,
     noteCarried: releaseCarry.noteCarried,
+    cutRelease: (config, logger) => releaseCut.cutRelease(config, logger, signoff.foremanAppliedOrHold(config, logger))
+      .catch((err: unknown) => ({ kind: "failed" as const, reason: err instanceof Error ? err.message : String(err) })),
     foremanAppliedOrHold: (config, logger) => signoff.foremanAppliedOrHold(config, logger),
     syncSignoff: (config, pr, headSha, unsigned, logger, unresolved, dark) => signoff.syncSignoff(config, pr, headSha, unsigned, logger, unresolved, dark),
     unsignedInHead: async (config, logger) => await signoff.unsignedInHead(config, logger),

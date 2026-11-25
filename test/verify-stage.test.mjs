@@ -308,6 +308,7 @@ async function correctionPass({ reason = "acceptance-not-verified", attempts = V
       findIssuesMergedToBase: async (_c, cands) => cands.filter((n) => mergedRefs[n]).map((n) => mergedRefs[n]),
       forgetOpenPrs: () => {},
       correctorsOf: async () => { if (correctorsThrow) throw new Error("422"); return correctors; },
+      foreignBlockerClosedSince: async () => false,
       issueLastEditedAt: async () => null,
     }[k];
     return impl ?? (async () => { throw new Error(`unexpected code host call: ${String(k)}`); });
