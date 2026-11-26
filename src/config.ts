@@ -208,7 +208,7 @@ export const configSchema = z.object({
   // it pushes over HTTPS with the session's GitHub token: GitHub SSH remotes are rewritten, and the host's
   // user.name and user.email are copied in. On, the daemon also sweeps leftover scratch homes
   // (<state>/session-homes) at start, refuses to start (exit 78) when bubblewrap cannot start a sandbox on the
-  // host, and refuses a sessionEnv naming HOME, CLAUDE_CONFIG_DIR or SSH_AUTH_SOCK. A repo MCP server whose
+  // host or github.com does not resolve inside it, and refuses a sessionEnv naming HOME, CLAUDE_CONFIG_DIR or SSH_AUTH_SOCK. A repo MCP server whose
   // files live outside its checkout cannot start in the fence. Not per repo: an unfenced repo keeps the
   // exposure. The bwrap binary comes from AI_AGENT_CONFINE_BWRAP (default `bwrap`).
   // Env strings: "true"/"1"/"yes"/"on" or "false"/"0"/"no"/"off"; anything else stops the start.
