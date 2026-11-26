@@ -262,11 +262,11 @@ export function nameResolutionTargets(files: string[] = NAME_RESOLUTION): string
 }
 
 /** Run `bin args` to its exit within the probe timeout; true on exit 0. */
-function probe(bin: string, args: string[]): Promise<boolean> {
+function probe(bin: string, args: string[], env: NodeJS.ProcessEnv = process.env): Promise<boolean> {
   return new Promise<boolean>((done) => {
     let child;
     try {
-      child = spawn(bin, args, { stdio: "ignore", timeout: PROBE_TIMEOUT_MS });
+      child = spawn(bin, args, { stdio: "ignore", timeout: PROBE_TIMEOUT_MS, env });
     } catch {
       done(false);
       return;
@@ -303,7 +303,10 @@ export async function confineProblems({ bwrap = "bwrap" }: { bwrap?: string } = 
     mkdirSync(home);
     const lookup = `require("node:dns").lookup(${JSON.stringify(PROBE_HOST)}, (e) => process.exit(e ? 1 : 0))`;
     const { bin, args } = confineCommand(process.execPath, ["-e", lookup], { cwd, home, bwrap });
-    if (await probe(bin, args)) return [];
+    // Without NODE_OPTIONS: a preload or require named there lives outside the fence (its /tmp is private)
+    // and would kill node before the lookup, refusing the start for a reason that is not DNS.
+    const { NODE_OPTIONS: _drop, ...env } = process.env;
+    if (await probe(bin, args, env)) return [];
     return [
       `confineSessions is on but ${PROBE_HOST} does not resolve inside the bubblewrap fence within ` +
         `${PROBE_TIMEOUT_MS / 1000}s; a session could not reach GitHub or the model. Check that every file in ` +

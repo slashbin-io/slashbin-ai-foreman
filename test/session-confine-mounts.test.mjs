@@ -182,3 +182,16 @@ test("dns: github.com and the model API resolve inside the fence, even when /etc
   const out = fenced(hosts.map((h, i) => `getent hosts ${h} >/dev/null && echo h${i}=yes || echo h${i}=no`).join("; "), { cwd, home });
   assert.deepEqual(out, { h0: "yes", h1: "yes" }, `name lookup inside the fence; linked targets bound: ${JSON.stringify(nameResolutionTargets())}`);
 });
+
+test("dns probe: a NODE_OPTIONS preload outside the fence does not fail the start probe", (t) => {
+  if (!canFence) return t.skip("bubblewrap cannot start a sandbox on this host");
+  if (spawnSync("getent", ["hosts", "github.com"]).status !== 0) return t.skip("this host cannot resolve names outside the fence");
+  const pre = join(tmp, "preload.mjs");
+  writeFileSync(pre, "export {};\n");
+  const mod = new URL("../dist/session/confine.js", import.meta.url).href;
+  const r = spawnSync(process.execPath, ["--input-type=module", "-e",
+    `const m = await import(${JSON.stringify(mod)}); console.log(JSON.stringify(await m.confineProblems({ bwrap: "bwrap" })));`],
+  { encoding: "utf8", env: { ...process.env, NODE_OPTIONS: `--import ${pre}` } });
+  assert.equal(r.status, 0, r.stderr);
+  assert.deepEqual(JSON.parse(r.stdout.trim()), [], "the probe drops NODE_OPTIONS, whose preload the fence cannot see");
+});
