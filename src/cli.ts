@@ -9,6 +9,7 @@ import { startDaemon } from "./daemon.js";
 import { runCycle } from "./orchestrator.js";
 import { claimPidFile, releasePidFile } from "./pidfile.js";
 import { buildRefusal } from "./build-info.js";
+import { confineStartRefusal } from "./session/confine.js";
 import { checkCredentials, shipConfigRefusal } from "./credentials.js";
 import { registerBuiltinPlugins, registerExternalPlugins } from "./plugins/index.js";
 import { exitAfterFlush } from "./exit-after-flush.js";
@@ -242,6 +243,15 @@ async function main(rt: ForemanRuntime): Promise<void> {
   } else {
     // Daemon mode.
     //
+    // Session confinement (src/session/confine.ts), before the PID claim so a refused start claims nothing:
+    // with confineSessions on, sweep the scratch homes a crash left, then refuse when bubblewrap cannot start
+    // a sandbox here. A fenced session never runs open. 78 (EX_CONFIG): a restart cannot install bwrap.
+    const unfenced = await confineStartRefusal(config);
+    if (unfenced) {
+      logger.error(`Refusing to start: ${unfenced}`);
+      process.exit(78);
+    }
+
     // Only a committed build runs as the daemon (src/build-info.ts).
     const refusal = buildRefusal(__dirname);
     if (refusal) {

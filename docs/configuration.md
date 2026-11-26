@@ -164,6 +164,12 @@ Type: boolean · Default: `true` · Env: `AI_AGENT_TRUST_MANAGED_REPOS`
 
 Mark every configured repo checkout, and every directory a session runs in, as trusted in Claude Code's global config ($CLAUDE_CONFIG_DIR/.claude.json, else ~/.claude.json). Without trust a headless session silently ignores the repo's .claude/settings.json and .mcp.json. Listing a repo here is the consent; set false to manage Claude Code trust yourself. Env strings parsed as for reviewLabelReconcile: "false"/"0"/"no"/"off" turn it off.
 
+### `confineSessions`
+
+Type: boolean · Default: `false` · Env: `AI_AGENT_CONFINE_SESSIONS`
+
+Prepare builder sessions for a bubblewrap fence (src/session/confine.ts). Sessions are NOT fenced yet: the spawn is wired by a later change, and until then this switch only gates the daemon's start. On, the daemon sweeps leftover scratch homes (<state>/session-homes) at start, refuses to start (exit 78) when bubblewrap cannot start a sandbox on the host, and refuses a sessionEnv naming HOME, CLAUDE_CONFIG_DIR or SSH_AUTH_SOCK. The fence it prepares shows a session its checkout, a scratch home and the Claude sign-in (read-only), never the host home's SSH keys, Doppler login or other sessions' transcripts. Not per repo: an unfenced repo keeps the exposure. The bwrap binary comes from AI_AGENT_CONFINE_BWRAP (default `bwrap`). Env strings: "true"/"1"/"yes"/"on" or "false"/"0"/"no"/"off"; anything else stops the start.
+
 ### `onboarding`
 
 Type: boolean · Default: `true` · Env: `AI_AGENT_ONBOARDING`
@@ -749,7 +755,7 @@ markers the Foreman and its skills talk through (`FOREMAN_RESULT`, `FOREMAN_REVI
 | Key | Default | Meaning |
 |---|---|---|
 | `blockedLabel` | `"blocked"` | The label that holds an issue back. An issue carrying it is never built, never reported stuck after a merge, and shows as Blocked to an observer. Sessions get it as FOREMAN_BLOCKED_LABEL. Must differ from every trigger and lifecycle label. |
-| `shippedDarkLabel` | `undefined` | The label on an issue that rode a release dark: its code is in production, its flag off, its enablement unsigned (SLA-5216). Still `pr approved`, so its card asks the EM to hold it on its enablement, not to run the release gate, and the promotion-stall note skips it. Sessions get it as FOREMAN_SHIPPED_DARK_LABEL. |
+| `shippedDarkLabel` | `"shipped dark"` | The label on an issue that rode a release dark: its code is in production, its flag off, its enablement unsigned (SLA-5216). Still `pr approved`, so its card asks the EM to hold it on its enablement, not to run the release gate, and the promotion-stall note skips it. Sessions get it as FOREMAN_SHIPPED_DARK_LABEL. |
 | `priorityLabels` | `[["S1"],["security"],["S2","bug"],["S2","enhancement"],["S2","feature"],["bug"],["enhancement"],["feature"],["S3"],["chore"]]` | The order the implement session picks among several approved issues, highest first. Each tier is the labels an issue must all carry; an issue takes the first tier it matches. Sessions get it as FOREMAN_PRIORITY_LABELS (JSON). An issue matching no tier comes after every tier. |
 | `dependencyBranchPrefixes` | `["dependabot/"]` | Head-branch prefixes that mark a dependency-update PR, for the dependency-batch issue. A branch, never a label: any account can apply a label, only the bot writes its own branches. Renovate's is "renovate/". |
 | `dependencyBatchTitlePrefix` | `"chore(deps): validate and land "` | The title every dependency-batch issue starts with. It is also how an open batch is found, so changing it while one is open files a second. |

@@ -202,6 +202,18 @@ export const configSchema = z.object({
     (v) => (typeof v === "string" ? !/^(0|false|no|off)$/i.test(v.trim()) : v),
     z.boolean(),
   ).default(true),
+  // Prepare builder sessions for a bubblewrap fence (src/session/confine.ts). Sessions are NOT fenced yet:
+  // the spawn is wired by a later change, and until then this switch only gates the daemon's start. On, the
+  // daemon sweeps leftover scratch homes (<state>/session-homes) at start, refuses to start (exit 78) when
+  // bubblewrap cannot start a sandbox on the host, and refuses a sessionEnv naming HOME, CLAUDE_CONFIG_DIR or
+  // SSH_AUTH_SOCK. The fence it prepares shows a session its checkout, a scratch home and the Claude sign-in
+  // (read-only), never the host home's SSH keys, Doppler login or other sessions' transcripts. Not per repo:
+  // an unfenced repo keeps the exposure. The bwrap binary comes from AI_AGENT_CONFINE_BWRAP (default `bwrap`).
+  // Env strings: "true"/"1"/"yes"/"on" or "false"/"0"/"no"/"off"; anything else stops the start.
+  confineSessions: z.preprocess(
+    (v) => (typeof v === "string" ? (/^(1|true|yes|on)$/i.test(v.trim()) ? true : /^(0|false|no|off)$/i.test(v.trim()) ? false : v) : v),
+    z.boolean(),
+  ).default(false),
   // Onboard a repo before its first piece of work: on start-up and on every
   // repo a config reload adds, create the labels the Foreman runs on that the
   // repo is missing (the trigger label, every lifecycleLabels value and
@@ -625,6 +637,8 @@ export interface AgentConfig {
   maxConcurrentSessions: number;
   /** Trust each managed checkout in Claude Code's global config (default true). */
   trustManagedRepos: boolean;
+  /** Fence every builder session in bubblewrap (src/session/confine.ts; default false). */
+  confineSessions: boolean;
   /** Create a repo's missing labels before its first lane pass (onboarding.ts). */
   onboarding: boolean;
   /** Most approved issues one build claims and hands its session (default 1). */
@@ -711,6 +725,9 @@ const SESSION_ENV_FORBIDDEN: readonly string[] = [
   "GH_TOKEN", "GITHUB_TOKEN", "GH_ENTERPRISE_TOKEN", "GITHUB_ENTERPRISE_TOKEN",
   "FOREMAN_GITHUB_TOKEN", "EM_GITHUB_TOKEN", "TECHLEAD_GITHUB_KEY", "SRE_GITHUB_KEY",
 ];
+
+/** Names `sessionEnv` may not carry while `confineSessions` is on: each reaches the host past the fence. */
+const SESSION_ENV_CONFINED: readonly string[] = ["HOME", "CLAUDE_CONFIG_DIR", "SSH_AUTH_SOCK"];
 
 /**
  * The `origin` URL of a checkout, read from its git config files rather than by running `git remote
@@ -840,6 +857,7 @@ export function loadConfig(configPath?: string): AgentConfig {
     maxConcurrentRepos: process.env.AI_AGENT_MAX_CONCURRENT_REPOS ?? fileConfig.maxConcurrentRepos,
     maxConcurrentSessions: process.env.AI_AGENT_MAX_CONCURRENT_SESSIONS ?? fileConfig.maxConcurrentSessions,
     trustManagedRepos: process.env.AI_AGENT_TRUST_MANAGED_REPOS ?? fileConfig.trustManagedRepos,
+    confineSessions: process.env.AI_AGENT_CONFINE_SESSIONS ?? fileConfig.confineSessions,
     onboarding: process.env.AI_AGENT_ONBOARDING ?? fileConfig.onboarding,
     buildBatchSize: process.env.AI_AGENT_BUILD_BATCH_SIZE ?? fileConfig.buildBatchSize,
     buildWaitsForDevVerify: process.env.AI_AGENT_BUILD_WAITS_FOR_DEV_VERIFY ?? fileConfig.buildWaitsForDevVerify,
@@ -922,6 +940,15 @@ export function loadConfig(configPath?: string): AgentConfig {
   for (const name of parsed.sessionEnv) {
     if (SESSION_ENV_FORBIDDEN.includes(name)) {
       throw new Error(`sessionEnv must not name a GitHub token: "${name}"`);
+    }
+  }
+  // A fenced session's home is its scratch home and its Claude config lives there; a name that hands it the
+  // host's home, config dir or SSH agent reopens what the fence closes.
+  if (parsed.confineSessions) {
+    for (const name of parsed.sessionEnv) {
+      if (SESSION_ENV_CONFINED.includes(name)) {
+        throw new Error(`sessionEnv must not name "${name}" while confineSessions is on: it reaches past the session's fence`);
+      }
     }
   }
 
@@ -1080,6 +1107,7 @@ export function loadConfig(configPath?: string): AgentConfig {
     ...(parsed.maxConcurrentRepos !== undefined ? { maxConcurrentRepos: parsed.maxConcurrentRepos } : {}),
     maxConcurrentSessions: parsed.maxConcurrentSessions,
     trustManagedRepos: parsed.trustManagedRepos,
+    confineSessions: parsed.confineSessions,
     onboarding: parsed.onboarding,
     buildBatchSize: parsed.buildBatchSize,
     buildWaitsForDevVerify: parsed.buildWaitsForDevVerify,
