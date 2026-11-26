@@ -152,10 +152,24 @@ export interface HeldIssue {
   reason: string;
 }
 
+/**
+ * The `originatedAt` for a hold being written: the prior hold's own, else (a legacy record) its `heldAt`, once;
+ * `now` only when there is no prior hold. Never `now` for an existing hold, so a rewrite cannot restart its age.
+ */
+export function holdOrigin(prior: Pick<VerifyHold, "heldAt"> & { originatedAt?: string } | undefined, now: string): string {
+  return (prior?.originatedAt ?? prior?.heldAt ?? now).replace(/\.\d+Z$/, "Z");
+}
+
 /** A merged PR whose dev verification did not pass (EM#440). */
 export interface VerifyHold {
-  /** ISO timestamp of the last verify attempt. */
+  /** ISO timestamp of the last verify attempt. Resets on every rewrite; the basis of the release facts. */
   heldAt: string;
+  /**
+   * ISO timestamp (UTC, Z suffix, whole seconds, as the EM's verify-disposition marker requires) of when this hold first began. Set once, copied on every rewrite, and
+   * deleted with the hold when it releases, so a later hold starts a new one. A record written before this
+   * field existed is backfilled from its own `heldAt` (see `holdOrigin`), so its age is a lower bound.
+   */
+  originatedAt: string;
   prNumber: number;
   /** The SRE's hold slug, or the error that left no verdict. */
   reason: string;
