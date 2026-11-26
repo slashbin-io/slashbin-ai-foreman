@@ -16,7 +16,10 @@
 //   - `cwd` and `write`, writable, with a linked worktree's git folders (`worktreeGitDirs`); `read`, read-only,
 //     even where it lies inside a writable folder;
 //   - never another session's scratch home: the folder they live in is masked wherever a bind exposes it.
-// The network is shared: a session must reach the model, GitHub and its MCP servers.
+// The network is shared: a session must reach the model, GitHub and its MCP servers. Name lookup needs the
+// files in `NAME_RESOLUTION`; where one is a link out of /etc (WSL points /etc/resolv.conf at
+// /mnt/wsl/resolv.conf), its target file alone is bound too, never the folder it sits in, so the link resolves.
+// `confineProblems` refuses a fence in which github.com does not resolve.
 //
 // Ported from slashbin-ai-team `lib/confine.js` (PR #147). That repo is private and this one is public, so
 // the argument construction is copied, never imported. This file is the one copy of fence logic here.
@@ -28,7 +31,7 @@
 
 import { execFile, spawn } from "node:child_process";
 import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readlinkSync, realpathSync, rmSync, statSync } from "node:fs";
-import { homedir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join, resolve, sep } from "node:path";
 import { promisify } from "node:util";
 import { stateDir } from "../state-dir.js";
@@ -37,6 +40,15 @@ const execFileAsync = promisify(execFile);
 
 /** The folders a fenced session reads system files from, as the host lays them out. */
 const CONFINE_SYSTEM = ["/usr", "/etc", "/bin", "/sbin", "/lib", "/lib32", "/lib64", "/libx32"];
+
+/**
+ * The files name lookup reads. A link here that leaves the system folders would dangle inside the fence
+ * (2026-11-26: WSL's /etc/resolv.conf -> /mnt/wsl/resolv.conf, so every lookup failed with EAI_AGAIN).
+ */
+export const NAME_RESOLUTION = ["/etc/resolv.conf", "/etc/hosts", "/etc/nsswitch.conf", "/etc/host.conf", "/etc/gai.conf"];
+
+/** The host the start probe resolves inside the fence: a session cannot clone, push or call gh without it. */
+const PROBE_HOST = "github.com";
 
 /** The largest git pointer file (`.git`, `commondir`, `gitdir`) read; real ones hold one path. */
 const POINTER_MAX = 4096;
@@ -121,6 +133,7 @@ export function confineCommand(bin: string, args: string[], opts: ConfineOptions
     else out.push("--ro-bind", p, p);
   }
   out.push("--proc", "/proc", "--dev", "/dev", "--tmpfs", "/tmp");
+  for (const target of nameResolutionTargets()) out.push("--ro-bind", target, target);
 
   // The scratch home at the host home's path; the sign-in carried in read-only, so a session can use it and
   // cannot change or truncate the file every session shares.
@@ -229,12 +242,31 @@ export function worktreeGitDirs(cwd: string, hostHome: string = homedir()): stri
   return [gitDir, common].filter((d) => !within(d, root));
 }
 
-/** Why a fenced session cannot start on this host, or [] when it can: bubblewrap must start a sandbox. */
-export async function confineProblems({ bwrap = "bwrap" }: { bwrap?: string } = {}): Promise<string[]> {
-  const ok = await new Promise<boolean>((done) => {
+/**
+ * The real files behind `NAME_RESOLUTION` entries that are links leading out of the system folders the fence
+ * binds. Only regular files: a target that is a folder (or missing) is left out, never bound whole.
+ */
+export function nameResolutionTargets(files: string[] = NAME_RESOLUTION): string[] {
+  const out = new Set<string>();
+  for (const f of files) {
+    try {
+      if (!lstatSync(f).isSymbolicLink()) continue;
+      const target = realpathSync.native(f);
+      if (CONFINE_SYSTEM.some((d) => within(target, d))) continue;
+      if (statSync(target).isFile()) out.add(target);
+    } catch {
+      /* missing or dangling on the host too: nothing to carry in */
+    }
+  }
+  return [...out];
+}
+
+/** Run `bin args` to its exit within the probe timeout; true on exit 0. */
+function probe(bin: string, args: string[]): Promise<boolean> {
+  return new Promise<boolean>((done) => {
     let child;
     try {
-      child = spawn(bwrap, ["--ro-bind", "/", "/", "--", "true"], { stdio: "ignore", timeout: PROBE_TIMEOUT_MS });
+      child = spawn(bin, args, { stdio: "ignore", timeout: PROBE_TIMEOUT_MS });
     } catch {
       done(false);
       return;
@@ -242,13 +274,44 @@ export async function confineProblems({ bwrap = "bwrap" }: { bwrap?: string } = 
     child.on("error", () => done(false));
     child.on("exit", (code) => done(code === 0));
   });
-  return ok
+}
+
+/** Whether bubblewrap starts a sandbox at all; [] when it does. The mount tests use this alone. */
+export async function bwrapProblems({ bwrap = "bwrap" }: { bwrap?: string } = {}): Promise<string[]> {
+  return (await probe(bwrap, ["--ro-bind", "/", "/", "--", "true"]))
     ? []
     : [
         `confineSessions is on but bubblewrap (${bwrap}) cannot start a sandbox on this host within ` +
           `${PROBE_TIMEOUT_MS / 1000}s. Install bwrap (or set AI_AGENT_CONFINE_BWRAP), or turn confineSessions off; ` +
           `a fenced session never runs open`,
       ];
+}
+
+/**
+ * Why a fenced session cannot start on this host, or [] when it can: bubblewrap must start a sandbox, and inside
+ * the real fence (`confineCommand`, a throwaway checkout and home) Node must resolve github.com. A fence that
+ * starts but cannot look a name up would fail every session's clone, push and model call.
+ */
+export async function confineProblems({ bwrap = "bwrap" }: { bwrap?: string } = {}): Promise<string[]> {
+  const started = await bwrapProblems({ bwrap });
+  if (started.length) return started;
+  const root = mkdtempSync(join(tmpdir(), "foreman-confine-probe-"));
+  try {
+    const cwd = join(root, "checkout");
+    const home = join(root, "home");
+    mkdirSync(cwd);
+    mkdirSync(home);
+    const lookup = `require("node:dns").lookup(${JSON.stringify(PROBE_HOST)}, (e) => process.exit(e ? 1 : 0))`;
+    const { bin, args } = confineCommand(process.execPath, ["-e", lookup], { cwd, home, bwrap });
+    if (await probe(bin, args)) return [];
+    return [
+      `confineSessions is on but ${PROBE_HOST} does not resolve inside the bubblewrap fence within ` +
+        `${PROBE_TIMEOUT_MS / 1000}s; a session could not reach GitHub or the model. Check that every file in ` +
+        `NAME_RESOLUTION (src/session/confine.ts) is readable in the fence, or turn confineSessions off`,
+    ];
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 }
 
 /** The folder every scratch home lives in. */

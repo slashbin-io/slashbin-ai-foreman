@@ -10,7 +10,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawnClaudeWithOptions } from "../dist/session/runner.js";
 import { buildSessionEnv } from "../dist/session/env.js";
-import { confineProblems, writeSessionGitConfig } from "../dist/session/confine.js";
+import { bwrapProblems, writeSessionGitConfig } from "../dist/session/confine.js";
 import { ForemanRuntime } from "../dist/runtime.js";
 import { setStateDir, stateDir } from "../dist/state-dir.js";
 
@@ -204,7 +204,7 @@ test("spawn: unconfined is unchanged: claude starts directly with the host home 
 });
 
 test("real fence: no host SSH key or agent, push URL is HTTPS, the token answers git, identity and trust carried in", async (t) => {
-  if ((await confineProblems({ bwrap: "bwrap" })).length) return t.skip("bubblewrap cannot start a sandbox on this host");
+  if ((await bwrapProblems({ bwrap: "bwrap" })).length) return t.skip("bubblewrap cannot start a sandbox on this host");
   writeReporter();
   const { logger: log } = logger();
   const r = await spawnClaudeWithOptions("hello", opts({ confine: true }), log);

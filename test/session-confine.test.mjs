@@ -76,7 +76,10 @@ test("the start gate runs in the daemon branch before the build check and the PI
 test("start passes the confinement probe with a working bwrap", async () => {
   rmSync(stubLog, { force: true });
   assert.equal(await confineStartRefusal({ confineSessions: true }, { AI_AGENT_CONFINE_BWRAP: stub }), null);
-  assert.equal(readFileSync(stubLog, "utf8").trim(), "--ro-bind / / -- true", "the probe asked bwrap for one sandbox");
+  const [start, lookup, ...rest] = readFileSync(stubLog, "utf8").trim().split("\n");
+  assert.equal(start, "--ro-bind / / -- true", "the probe first asked bwrap for one sandbox");
+  assert.match(lookup, /--unshare-pid .* -- \S*node -e require\("node:dns"\)\.lookup\("github\.com"/, "then resolved github.com inside the real fence");
+  assert.deepEqual(rest, [], "and nothing else");
 });
 
 test("no probe runs when confineSessions is off", async () => {
