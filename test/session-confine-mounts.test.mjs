@@ -7,7 +7,7 @@ import { execFileSync, spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { confineCommand, confineProblems, createSessionHome, worktreeGitDirs } from "../dist/session/confine.js";
+import { bwrapProblems, confineCommand, confineProblems, createSessionHome, nameResolutionTargets, worktreeGitDirs } from "../dist/session/confine.js";
 import { setStateDir, stateDir } from "../dist/state-dir.js";
 
 let tmp, savedState, canFence;
@@ -15,7 +15,7 @@ let tmp, savedState, canFence;
 before(async () => {
   tmp = realpathSync(mkdtempSync(join(tmpdir(), "foreman-confine-mounts-")));
   savedState = stateDir();
-  canFence = (await confineProblems({ bwrap: "bwrap" })).length === 0;
+  canFence = (await bwrapProblems({ bwrap: "bwrap" })).length === 0;
 });
 
 after(() => {
@@ -169,4 +169,29 @@ test("worktree pointers: a .git or commondir a session rewrote to name the host 
   // A common dir that would cover the host home.
   writeFileSync(join(wt, ".git"), good);
   assert.throws(() => worktreeGitDirs(wt, join(base, "main", ".git", "hooks")), /cover the home/);
+});
+
+test("dns: github.com and the model API resolve inside the fence, even when /etc/resolv.conf links outside /etc (WSL)", async (t) => {
+  if (!canFence) return t.skip("bubblewrap cannot start a sandbox on this host");
+  const hosts = ["github.com", "api.anthropic.com"];
+  if (hosts.some((h) => spawnSync("getent", ["hosts", h]).status !== 0)) return t.skip("this host cannot resolve names outside the fence");
+  const cwd = join(tmp, "dns");
+  mkdirSync(cwd);
+  setStateDir(join(tmp, "dns-state"));
+  const home = await createSessionHome();
+  const out = fenced(hosts.map((h, i) => `getent hosts ${h} >/dev/null && echo h${i}=yes || echo h${i}=no`).join("; "), { cwd, home });
+  assert.deepEqual(out, { h0: "yes", h1: "yes" }, `name lookup inside the fence; linked targets bound: ${JSON.stringify(nameResolutionTargets())}`);
+});
+
+test("dns probe: a NODE_OPTIONS preload outside the fence does not fail the start probe", (t) => {
+  if (!canFence) return t.skip("bubblewrap cannot start a sandbox on this host");
+  if (spawnSync("getent", ["hosts", "github.com"]).status !== 0) return t.skip("this host cannot resolve names outside the fence");
+  const pre = join(tmp, "preload.mjs");
+  writeFileSync(pre, "export {};\n");
+  const mod = new URL("../dist/session/confine.js", import.meta.url).href;
+  const r = spawnSync(process.execPath, ["--input-type=module", "-e",
+    `const m = await import(${JSON.stringify(mod)}); console.log(JSON.stringify(await m.confineProblems({ bwrap: "bwrap" })));`],
+  { encoding: "utf8", env: { ...process.env, NODE_OPTIONS: `--import ${pre}` } });
+  assert.equal(r.status, 0, r.stderr);
+  assert.deepEqual(JSON.parse(r.stdout.trim()), [], "the probe drops NODE_OPTIONS, whose preload the fence cannot see");
 });

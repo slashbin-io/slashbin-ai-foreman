@@ -8,6 +8,7 @@
 - [Token isolation and redaction](#token-isolation-and-redaction)
 - [The secret gate (PreToolUse hook)](#the-secret-gate-pretooluse-hook)
 - [Claude Code workspace trust](#claude-code-workspace-trust)
+- [Name lookup inside the session fence](#name-lookup-inside-the-session-fence)
 
 Every Claude session the Foreman starts runs unattended, with a GitHub token, in a
 checkout of your repo. This page is what limits what a session holds and what it can
@@ -86,3 +87,7 @@ it repeats, the config the session reads is not the one being written — check 
 whether `CLAUDE_CONFIG_DIR` is in `sessionEnv`.
 
 Code: `src/claude-trust.ts`.
+
+## Name lookup inside the session fence
+
+The bubblewrap fence (`confineSessions`) binds `/etc` read-only, but a name-resolution file there can be a link out of it: on WSL `/etc/resolv.conf` points into `/mnt/wsl`, which the fence does not bind, so every lookup failed and no session could reach GitHub or the model. The fence binds the resolved target of each such link (`NAME_RESOLUTION` in `src/session/confine.ts`) read-only, the one file and never its directory, so nothing else under `/mnt` becomes visible; and the daemon refuses to start (exit 78) unless github.com resolves inside a real fence.
