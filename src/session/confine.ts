@@ -19,14 +19,19 @@
 // Ported from slashbin-ai-team `lib/confine.js` (PR #147). That repo is private and this one is public, so
 // the argument construction is copied, never imported. This file is the one copy of fence logic here.
 //
-// Nothing starts a session through this yet: the spawn wiring is the sibling card. Until then
-// `confineSessions: true` only refuses a start on a host that cannot run a sandbox.
+// With `confineSessions` on, every builder session starts through `confineCommand` (src/session/runner.ts).
+// The host home is gone, so git there has no SSH key, no agent and no `~/.gitconfig`: `writeSessionGitConfig`
+// gives the scratch home the host's commit identity, rewrites GitHub SSH remotes to HTTPS and answers the
+// HTTPS credential prompt with the session's own GH_TOKEN, so a push needs nothing from the host.
 
-import { spawn } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import { existsSync, lstatSync, mkdirSync, mkdtempSync, readlinkSync, realpathSync, rmSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve, sep } from "node:path";
+import { promisify } from "node:util";
 import { stateDir } from "../state-dir.js";
+
+const execFileAsync = promisify(execFile);
 
 /** The folders a fenced session reads system files from, as the host lays them out. */
 const CONFINE_SYSTEM = ["/usr", "/etc", "/bin", "/sbin", "/lib", "/lib32", "/lib64", "/libx32"];
@@ -174,6 +179,40 @@ export async function createSessionHome(): Promise<string> {
   const dir = sessionHomesDir();
   mkdirSync(dir, { recursive: true, mode: 0o700 });
   return mkdtempSync(join(dir, "s-"));
+}
+
+/**
+ * The git credential helper a fenced session uses for https://github.com: the session's GH_TOKEN, read when git
+ * asks, so the token is never written to disk. `store` and `erase` are ignored.
+ */
+export const SESSION_GIT_CREDENTIAL_HELPER =
+  '!f() { test "$1" = get || exit 0; echo username=x-access-token; echo "password=$GH_TOKEN"; }; f';
+
+/** The GitHub SSH remote forms a fenced session's git rewrites to HTTPS: it has no SSH key or agent. */
+export const SESSION_GIT_SSH_FORMS = ["git@github.com:", "ssh://git@github.com/"];
+
+/**
+ * Write `<home>/.gitconfig` for a fenced session: the host's global commit identity (`user.name`, `user.email`,
+ * when set), every GitHub SSH remote rewritten to HTTPS, and the GH_TOKEN credential helper as the only one for
+ * https://github.com (the empty first value resets any the system config names). Nothing else of the host's
+ * git config crosses.
+ */
+export async function writeSessionGitConfig(home: string, env: NodeJS.ProcessEnv = process.env): Promise<void> {
+  const file = join(home, ".gitconfig");
+  const set = (key: string, value: string, add = false) =>
+    execFileAsync("git", ["config", "--file", file, ...(add ? ["--add"] : []), key, value], { env });
+  for (const key of ["user.name", "user.email"]) {
+    let value = "";
+    try {
+      value = (await execFileAsync("git", ["config", "--global", "--get", key], { env })).stdout.trim();
+    } catch {
+      /* unset on the host: git asks for it inside, as it would outside */
+    }
+    if (value) await set(key, value);
+  }
+  for (const [i, form] of SESSION_GIT_SSH_FORMS.entries()) await set("url.https://github.com/.insteadOf", form, i > 0);
+  await set("credential.https://github.com.helper", "");
+  await set("credential.https://github.com.helper", SESSION_GIT_CREDENTIAL_HELPER, true);
 }
 
 /** Remove a session's scratch home. A missing one is a no-op. */

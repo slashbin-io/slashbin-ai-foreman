@@ -63,6 +63,7 @@ export async function runCustomStage(
       model: config.model,
       allowedTools: config.allowedTools,
       mcpConfig: config.builderMcpConfig,
+      confine: config.confineSessions,
       maxTurns: config.maxTurns,
       maxDurationMs: config.maxDurationMs,
       transcriptPath,

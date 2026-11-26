@@ -44,6 +44,8 @@ export interface SpawnOptions {
   runLabel?: string;
   /** Extra session env on top of the label env every session gets. */
   extraEnv?: Record<string, string>;
+  /** Start the session inside the bubblewrap fence (config `confineSessions`, src/session/confine.ts). */
+  confine?: boolean;
 }
 
 /**
@@ -55,6 +57,9 @@ export const SESSION_ENV_ESSENTIALS: readonly string[] = [
   "PATH", "HOME", "USER", "LOGNAME", "SHELL", "LANG", "LC_ALL", "LC_CTYPE",
   "TZ", "TMPDIR", "TERM", "XDG_RUNTIME_DIR", "SSH_AUTH_SOCK",
 ];
+
+/** Essentials a fenced session does not inherit: each names a host path the fence hides. */
+export const SESSION_ENV_UNFENCED: readonly string[] = ["SSH_AUTH_SOCK", "XDG_RUNTIME_DIR", "TMPDIR"];
 
 /** Copy each name present in the daemon env. */
 export function pickEnv(names: readonly string[], into: Record<string, string> = {}): Record<string, string> {
@@ -81,6 +86,9 @@ export function pickEnv(names: readonly string[], into: Record<string, string> =
  */
 export function buildSessionEnv(opts: SpawnOptions): Record<string, string> {
   const env = pickEnv([...SESSION_ENV_ESSENTIALS, ...(opts.sessionEnv ?? [])]);
+  // A fenced session cannot reach these: the agent socket and the runtime folder are host paths outside the
+  // fence, and its /tmp is private. HOME stays: the scratch home is bound at the host home's path.
+  if (opts.confine) for (const n of SESSION_ENV_UNFENCED) delete env[n];
   // GH_TOKEN must be a string or absent — never literal "undefined".
   if (opts.ghToken) env.GH_TOKEN = opts.ghToken;
   // The configured label names, for the skill. The daemon filtering on a renamed

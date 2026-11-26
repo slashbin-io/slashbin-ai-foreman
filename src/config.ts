@@ -202,13 +202,15 @@ export const configSchema = z.object({
     (v) => (typeof v === "string" ? !/^(0|false|no|off)$/i.test(v.trim()) : v),
     z.boolean(),
   ).default(true),
-  // Prepare builder sessions for a bubblewrap fence (src/session/confine.ts). Sessions are NOT fenced yet:
-  // the spawn is wired by a later change, and until then this switch only gates the daemon's start. On, the
-  // daemon sweeps leftover scratch homes (<state>/session-homes) at start, refuses to start (exit 78) when
-  // bubblewrap cannot start a sandbox on the host, and refuses a sessionEnv naming HOME, CLAUDE_CONFIG_DIR or
-  // SSH_AUTH_SOCK. The fence it prepares shows a session its checkout, a scratch home and the Claude sign-in
-  // (read-only), never the host home's SSH keys, Doppler login or other sessions' transcripts. Not per repo:
-  // an unfenced repo keeps the exposure. The bwrap binary comes from AI_AGENT_CONFINE_BWRAP (default `bwrap`).
+  // Start every builder session (implement, revise, custom stage) inside a bubblewrap fence
+  // (src/session/confine.ts). A fenced session sees its checkout, a scratch home of its own and the Claude
+  // sign-in (read-only), never the host home's SSH keys, Doppler login or other sessions' transcripts. Git in
+  // it pushes over HTTPS with the session's GitHub token: GitHub SSH remotes are rewritten, and the host's
+  // user.name and user.email are copied in. On, the daemon also sweeps leftover scratch homes
+  // (<state>/session-homes) at start, refuses to start (exit 78) when bubblewrap cannot start a sandbox on the
+  // host, and refuses a sessionEnv naming HOME, CLAUDE_CONFIG_DIR or SSH_AUTH_SOCK. A repo MCP server whose
+  // files live outside its checkout cannot start in the fence. Not per repo: an unfenced repo keeps the
+  // exposure. The bwrap binary comes from AI_AGENT_CONFINE_BWRAP (default `bwrap`).
   // Env strings: "true"/"1"/"yes"/"on" or "false"/"0"/"no"/"off"; anything else stops the start.
   confineSessions: z.preprocess(
     (v) => (typeof v === "string" ? (/^(1|true|yes|on)$/i.test(v.trim()) ? true : /^(0|false|no|off)$/i.test(v.trim()) ? false : v) : v),
@@ -584,6 +586,8 @@ export interface RepoConfig {
   builderMcpConfig?: string;
   /** Daemon env names a session inherits on top of the essentials — the global value. */
   sessionEnv: string[];
+  /** Start builder sessions inside the bubblewrap fence: the global `confineSessions`, never per repo. */
+  confineSessions: boolean;
   // Whether the review phase runs for this repo (resolved from per-repo override
   // or the global reviewEnabled default).
   reviewEnabled: boolean;
@@ -960,6 +964,7 @@ export function loadConfig(configPath?: string): AgentConfig {
     allowedTools: [...parsed.allowedTools],
     builderMcpConfig: parsed.builderMcpConfig ? resolve(parsed.builderMcpConfig) : undefined,
     sessionEnv: [...parsed.sessionEnv],
+    confineSessions: parsed.confineSessions,
     lifecycleLabels,
     github,
     dependabot: Object.freeze({ securityOnly: parsed.dependabot.securityOnly }),

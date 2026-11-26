@@ -9,6 +9,7 @@ import { isUntrustedWarning, type ClaudeTrust } from "../claude-trust.js";
 import { contractBlock, contractReaderPath } from "../handoff-contract.js";
 import { SESSION_SECRET_GATE, sessionSettings } from "./secret-gate.js";
 import { buildSessionEnv, createStreamRedactor, secretValues, type SpawnOptions } from "./env.js";
+import { confineBwrap, confineCommand, createSessionHome, removeSessionHome, writeSessionGitConfig } from "./confine.js";
 
 const FOREMAN_OVERRIDES = resolve(
   dirname(fileURLToPath(import.meta.url)),
@@ -100,7 +101,7 @@ export function mcpServerNames(path: string, logger: Logger): string[] {
  * tool surface — implement/revise run in the service repo under the Foreman
  * token. Review is not a Claude session at all: the Tech Lead runs it (reviewViaTechLead).
  */
-export function spawnClaudeWithOptions(
+export async function spawnClaudeWithOptions(
   prompt: string,
   opts: SpawnOptions,
   logger: Logger,
@@ -165,6 +166,31 @@ export function spawnClaudeWithOptions(
     args.push("--allowedTools", allowedTools.join(","));
   }
 
+  const env = buildSessionEnv(opts);
+
+  // Fenced (`confineSessions`, #404): the session starts inside bubblewrap with a scratch home of its own,
+  // bound at the host home's path. Its git config gets the identity, the SSH-to-HTTPS rewrite and the token
+  // credential helper; its trust lands in the scratch home's .claude.json, where the fenced CLI looks. The
+  // files it is started with from this install are carried in read-only. A fence that cannot be set up fails
+  // the session; it never runs open.
+  let launch: { bin: string; args: string[] } = { bin: "claude", args };
+  let trustEnv: Record<string, string> = env;
+  let sessionHome: string | null = null;
+  if (opts.confine) {
+    try {
+      sessionHome = await createSessionHome();
+      await writeSessionGitConfig(sessionHome);
+      trustEnv = { ...env, HOME: sessionHome };
+      const read = [SESSION_SECRET_GATE, FOREMAN_OVERRIDES, ...(opts.mcpConfig ? [opts.mcpConfig] : [])];
+      launch = confineCommand("claude", args, { cwd: opts.cwd, home: sessionHome, read, bwrap: confineBwrap() });
+    } catch (err) {
+      if (sessionHome) await removeSessionHome(sessionHome).catch(() => {});
+      const message = `Confined session could not start: ${err instanceof Error ? err.message : String(err)}`;
+      logger.error(message);
+      return { stdout: "", stderr: message, exitCode: -1, timedOut: false };
+    }
+  }
+
   let transcript: WriteStream | null = null;
   if (opts.transcriptPath) {
     try {
@@ -173,7 +199,7 @@ export function spawnClaudeWithOptions(
       const argsForLog = args.map((a) => (a === prompt ? "<prompt>" : a));
       transcript.write(
         `# claude invocation @ ${new Date().toISOString()}\n` +
-        `# cwd=${opts.cwd}\n` +
+        `# cwd=${opts.cwd}${sessionHome ? " (confined)" : ""}\n` +
         `# args=${JSON.stringify(argsForLog)}\n` +
         `# prompt:\n${prompt}\n\n===== STREAM =====\n`
       );
@@ -183,12 +209,10 @@ export function spawnClaudeWithOptions(
     }
   }
 
-  const env = buildSessionEnv(opts);
-
   // Claude Code ignores an untrusted checkout's .claude/settings.json and .mcp.json
   // and only says so on stderr. Trust it first — under the session's own HOME /
   // CLAUDE_CONFIG_DIR, which is where this session will look (src/claude-trust.ts).
-  opts.trust.ensure(opts.cwd, logger, env);
+  opts.trust.ensure(opts.cwd, logger, trustEnv);
 
   // Everything the child prints is redacted at each sink — transcript, logger
   // lines, and the stdout/stderr handed back (which feed trailer parsing and
@@ -209,7 +233,7 @@ export function spawnClaudeWithOptions(
       untrustedSeen = true;
       if (opts.trust.isEnabled()) {
         logger.warn(`Claude Code reports ${opts.cwd} is not trusted — this session ran without the repo's .claude/settings.json and .mcp.json; trusting it for the next one`);
-        const outcome = opts.trust.ensure(opts.cwd, logger, env, "untrusted warning on stderr");
+        const outcome = opts.trust.ensure(opts.cwd, logger, trustEnv, "untrusted warning on stderr");
         if (outcome === "already") {
           logger.warn(`Claude Code trust: ${opts.cwd} is already marked trusted in the config this session reads, yet Claude Code still reports it untrusted — check HOME / CLAUDE_CONFIG_DIR in sessionEnv`);
         }
@@ -229,6 +253,12 @@ export function spawnClaudeWithOptions(
     const finish = (r: SpawnResult) => {
       if (finished) return;
       finished = true;
+      if (sessionHome) {
+        const home = sessionHome;
+        sessionHome = null;
+        removeSessionHome(home).catch((err) =>
+          logger.warn(`Failed to remove session home ${home}: ${err instanceof Error ? err.message : String(err)}`));
+      }
       warnStderr(stderrLine);
       stderrLine = "";
       if (transcript) {
@@ -264,7 +294,7 @@ export function spawnClaudeWithOptions(
       abortSignal.addEventListener("abort", onAbort, { once: true });
     }
 
-    child = spawn("claude", args, {
+    child = spawn(launch.bin, launch.args, {
       cwd: opts.cwd,
       env,
       stdio: ["ignore", "pipe", "pipe"],
@@ -333,6 +363,7 @@ export function spawnClaude(
       maxTurns: config.maxTurns,
       maxDurationMs: config.maxDurationMs,
       transcriptPath,
+      confine: config.confineSessions,
     },
     logger,
     abortSignal
