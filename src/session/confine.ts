@@ -38,6 +38,9 @@ const execFileAsync = promisify(execFile);
 /** The folders a fenced session reads system files from, as the host lays them out. */
 const CONFINE_SYSTEM = ["/usr", "/etc", "/bin", "/sbin", "/lib", "/lib32", "/lib64", "/libx32"];
 
+/** The largest git pointer file (`.git`, `commondir`, `gitdir`) read; real ones hold one path. */
+const POINTER_MAX = 4096;
+
 /** How long the start probe may take before the sandbox counts as unable to start. */
 const PROBE_TIMEOUT_MS = 10_000;
 
@@ -166,10 +169,13 @@ export function confineCommand(bin: string, args: string[], opts: ConfineOptions
  * the objects and refs. Both are bound writable; no other checkout's working files are. [] for a plain checkout.
  *
  * Both pointers are files a session can rewrite, so neither is trusted alone: a gitdir is accepted only when it
- * is `<common>/worktrees/<name>` and its own `gitdir` file points back at this checkout's `.git`. Pointing them
- * at a folder the session cannot already write (the host home, say) cannot pass, because the back-pointer would
- * have to be written there first. A `.git` file that fails the check throws: the session is refused, never
- * started with the pointer dropped or followed.
+ * is `<common>/worktrees/<name>` inside a folder laid out as a git dir, its `commondir` resolves to that same
+ * `<common>`, and its own `gitdir` file points back at this checkout's `.git`. Pointing them at a folder the
+ * session cannot already write (the host home, say) cannot pass, because the back-pointer would have to be
+ * written there first. The shape is checked before any file outside the checkout is read, and a pointer file is
+ * read only when it is a small regular file, never through a link. A `.git` file that fails throws a fixed
+ * message naming no path or content it read: the session is refused, never started with the pointer dropped or
+ * followed.
  */
 export function worktreeGitDirs(cwd: string, hostHome: string = homedir()): string[] {
   const root = real(cwd);
@@ -182,25 +188,44 @@ export function worktreeGitDirs(cwd: string, hostHome: string = homedir()): stri
   }
   if (st.isDirectory()) return [];
   const refuse = (why: string): never => {
-    throw new Error(`Confined session refused: ${dotGit} ${why}`);
+    throw new Error(`Confined session refused: the checkout's .git ${why}`);
   };
-  if (!st.isFile()) refuse("is neither a folder nor a gitdir file");
-  const m = readFileSync(dotGit, "utf-8").match(/^gitdir:\s*(.+)$/m);
-  if (!m) refuse("names no gitdir");
-  const gitDir = real(resolve(root, m![1].trim()));
-  const read = (f: string) => {
+  /** A pointer file's text: a regular file (not a link) of at most POINTER_MAX bytes, else null. */
+  const pointer = (file: string): string | null => {
     try {
-      return readFileSync(join(gitDir, f), "utf-8").trim();
+      const f = lstatSync(file);
+      if (!f.isFile() || f.size > POINTER_MAX) return null;
+      return readFileSync(file, "utf-8").trim();
     } catch {
-      return refuse(`names ${gitDir}, which has no ${f} file`);
+      return null;
     }
   };
-  const commonRaw = read("commondir");
-  const common = real(isAbsolute(commonRaw) ? commonRaw : resolve(gitDir, commonRaw));
-  if (gitDir !== join(common, "worktrees", basename(gitDir))) refuse(`names ${gitDir}, which is not a worktree of ${common}`);
-  if (real(resolve(gitDir, read("gitdir"))) !== dotGit) refuse(`names ${gitDir}, which belongs to another checkout`);
+  const isDir = (p: string) => {
+    try {
+      return statSync(p).isDirectory();
+    } catch {
+      return false;
+    }
+  };
+  const dotGitText = pointer(dotGit) ?? refuse("is neither a folder nor a gitdir file");
+  const m = dotGitText.match(/^gitdir:\s*(.+)$/m) ?? refuse("names no gitdir");
+  const gitDir = real(resolve(root, m[1].trim()));
+  const common = dirname(dirname(gitDir));
+  const shaped =
+    basename(dirname(gitDir)) === "worktrees" &&
+    isDir(gitDir) &&
+    isDir(join(common, "objects")) &&
+    isDir(join(common, "refs")) &&
+    pointer(join(common, "HEAD")) !== null;
+  if (!shaped) refuse("names a folder that is not a linked worktree's git dir");
+  const commonRaw = pointer(join(gitDir, "commondir")) ?? refuse("names a git dir without a readable commondir");
+  if (real(isAbsolute(commonRaw) ? commonRaw : resolve(gitDir, commonRaw)) !== common) {
+    refuse("names a git dir whose commondir does not hold it");
+  }
+  const back = pointer(join(gitDir, "gitdir")) ?? refuse("names a git dir without a readable back-pointer");
+  if (real(resolve(gitDir, back)) !== dotGit) refuse("names a git dir that belongs to another checkout");
   const home = real(hostHome);
-  for (const d of [gitDir, common]) if (within(home, d)) refuse(`resolves to ${d}, which would cover the home`);
+  if ([gitDir, common].some((d) => within(home, d))) refuse("names a git dir that would cover the home");
   return [gitDir, common].filter((d) => !within(d, root));
 }
 

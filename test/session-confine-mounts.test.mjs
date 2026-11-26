@@ -4,7 +4,7 @@
 import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { confineCommand, confineProblems, createSessionHome, worktreeGitDirs } from "../dist/session/confine.js";
@@ -130,14 +130,35 @@ test("worktree pointers: a .git or commondir a session rewrote to name the host 
   writeFileSync(join(forged, "commondir"), hostHome);
   writeFileSync(join(forged, "gitdir"), join(wt, ".git"));
   writeFileSync(join(wt, ".git"), `gitdir: ${forged}\n`);
-  assert.throws(() => worktreeGitDirs(wt, hostHome), /not a worktree of/);
+  assert.throws(() => worktreeGitDirs(wt, hostHome), /not a linked worktree's git dir/);
 
   // R4: .git untouched, the writable admin folder's commondir rewritten to the host home.
   writeFileSync(join(wt, ".git"), good);
   const commondir = readFileSync(join(admin, "commondir"), "utf8");
   writeFileSync(join(admin, "commondir"), hostHome);
-  assert.throws(() => worktreeGitDirs(wt, hostHome), /not a worktree of/);
+  assert.throws(() => worktreeGitDirs(wt, hostHome), /commondir does not hold it/);
   writeFileSync(join(admin, "commondir"), commondir);
+
+  // The admin folder's pointers swapped for links to a host secret: refused without the secret, or any path
+  // read, in the message.
+  for (const f of ["commondir", "gitdir"]) {
+    const saved = readFileSync(join(admin, f), "utf8");
+    rmSync(join(admin, f));
+    symlinkSync(join(hostHome, ".ssh", "id_ed25519"), join(admin, f));
+    assert.throws(
+      () => worktreeGitDirs(wt, hostHome),
+      (e) => /Confined session refused/.test(e.message) && !e.message.includes("dummy") && !e.message.includes(hostHome),
+    );
+    rmSync(join(admin, f));
+    writeFileSync(join(admin, f), saved);
+  }
+  // .git itself a link to the secret.
+  rmSync(join(wt, ".git"));
+  symlinkSync(join(hostHome, ".ssh", "id_ed25519"), join(wt, ".git"));
+  assert.throws(() => worktreeGitDirs(wt, hostHome), (e) => !e.message.includes("dummy"));
+  rmSync(join(wt, ".git"));
+  writeFileSync(join(wt, ".git"), good);
+  assert.equal(worktreeGitDirs(wt, hostHome).length, 2, "restored, it passes again");
 
   // Another checkout's admin folder: its back-pointer names that checkout, not this one.
   const other = join(base, "wt2");
