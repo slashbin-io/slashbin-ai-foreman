@@ -77,6 +77,14 @@ test("config: a blocked label that clashes, or a signature naming an issue, fail
   assert.equal(githubConventionsSchema.parse({ signature: "  " }).signature, "");
 });
 
+test("issueStage: release pending + blocked is releaseParked; the label alone, or a held verify, stays blocked; lifting it returns to the release stage", () => {
+  const R = { ...L, releasePending: "release pending", prodVerifyHeld: "prod verification held" };
+  assert.equal(issueStage(["release pending", "blocked"], false, R, "approved"), "releaseParked");
+  assert.equal(issueStage(["release pending", "prod verification held", "blocked"], false, R, "approved"), "blocked");
+  assert.equal(issueStage(["blocked"], false, R, "approved"), "blocked");
+  assert.equal(issueStage(["release pending"], false, R, "approved"), "releasing", "restored to where it was, with no grant added");
+});
+
 test("issueStage: a custom blocked label holds the issue; the default word no longer does", () => {
   assert.equal(issueStage(["pr merged", "on hold"], false, L, "approved", "on hold"), "blocked");
   assert.notEqual(issueStage(["pr merged", "blocked"], false, L, "approved", "on hold"), "blocked");

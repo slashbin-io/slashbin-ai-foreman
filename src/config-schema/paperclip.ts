@@ -36,6 +36,7 @@ const stageLabelsSchema = z.object({
   awaitingRelease: stageLabel("Awaiting release", "#059669"),
   releasing: stageLabel("Releasing", "#16a34a"),
   awaitingSignoff: stageLabel("Awaiting EM sign-off", "#ea580c"),
+  releaseParked: stageLabel("Release parked", "#78716c"),
   prodVerifyHeld: stageLabel("Prod verification held", "#b45309"),
   needsRuling: stageLabel("Needs EM ruling", "#be185d"),
   blocked: stageLabel("Blocked", "#dc2626"),
@@ -71,6 +72,9 @@ const boardStagesSchema = z.object({
   // `ready for prod release`. Blocked (#198): the release is stopped on a person; point `owner` at the EM's role
   // to hand it over. The card returns to Releasing on the pass after the status turns green.
   awaitingSignoff: stage(PAPERCLIP_FOREMAN_ROLE, "blocked", "awaitingSignoff"),
+  // Held out of the release by a stop (`release pending` + `blocked`): parked off the active columns until the stop
+  // lifts. Blocked (a person lifts it); never moved by age. Returns to Releasing, once, when the label goes.
+  releaseParked: stage(PAPERCLIP_FOREMAN_ROLE, "blocked", "releaseParked"),
   // Merged to production, but prod verification held (`prod verification held`): re-verified on a back-off.
   // in_review, not blocked: the Foreman is still acting on it, and blocked is a person's queue.
   prodVerifyHeld: stage(PAPERCLIP_FOREMAN_ROLE, "in_review", "prodVerifyHeld"),

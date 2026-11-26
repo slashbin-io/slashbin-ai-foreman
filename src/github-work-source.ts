@@ -49,7 +49,8 @@ export function issueStage(
   signoffHeld = false,
 ): StageOrDone | null {
   const has = (l: string) => labels.includes(l);
-  if (has(blockedLabel)) return "blocked";
+  // A stop on a release the Foreman owns: parked, not Blocked. A deployed card (`prod verification held`) is a hold, not a park.
+  if (has(blockedLabel)) return has(lifecycle.releasePending) && !has(lifecycle.prodVerifyHeld) ? "releaseParked" : "blocked";
   if (has(lifecycle.readyToClose)) return "done";
   if (has(lifecycle.prodVerifyHeld)) return "prodVerifyHeld";
   if (has(lifecycle.releasePending)) return signoffHeld ? "awaitingSignoff" : "releasing";

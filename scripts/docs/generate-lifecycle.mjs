@@ -44,6 +44,7 @@ for (const l of [TRIGGER, SOURCE_BLOCKED_LABEL, ...Object.values(defaultLifecycl
 }
 STAGE_MARK[issueStage([], true, defaultLifecycleLabels(), TRIGGER)] = ["an open release PR names it"];
 STAGE_MARK.awaitingSignoff = [`${defaultLifecycleLabels().releasePending}` + "` while the release PR's EM sign-off status fails"].map((x) => `\`${x}`);
+STAGE_MARK.releaseParked = [`${defaultLifecycleLabels().releasePending}` + "` with `blocked"].map((x) => `\`${x}\``);
 STAGE_MARK.done = ["closed", ...(STAGE_MARK.done ?? [])];
 
 // --- Event kinds: the union in adapters.ts, described here ---

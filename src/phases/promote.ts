@@ -177,6 +177,53 @@ async function heldReleaseIssues(repoConfig: RepoConfig, logger: Logger): Promis
     .sort((a, b) => a - b);
 }
 
+/** Who lifts a parked release's stop, and what resumes it: the same for every stop (the `blocked` label is the one authority). */
+export const PARKED_OWNER = "EM";
+export const PARKED_RESUME_WHEN = "the `blocked` label is lifted from the issue; the normal gates and sign-off then apply";
+
+/**
+ * ReleaseParking (EM#2985). Issues a stop holds (`release pending` + `blocked`) are parked: the stage is derived from
+ * the labels on every pass (`issueStage`), and this keeps the park's record (reason, owner, resumption condition) in
+ * step with it: written once when an issue is first held, deleted once when the label goes. It changes only where a
+ * card shows. It never labels, comments on, merges, promotes or grants an issue, and age plays no part: a parked card
+ * has no maximum age and is never closed. A record that cannot be read or saved is left for the next pass.
+ */
+export async function syncReleaseParking(rt: ForemanRuntime, repoConfig: RepoConfig, logger: Logger, now: Date = new Date()): Promise<{ parked: number[]; restored: number[] }> {
+  const out = { parked: [] as number[], restored: [] as number[] };
+  const held = await heldReleaseIssues(repoConfig, logger);
+  const open = (await codeHost().getOpenIssues(repoConfig.githubRepo, repoConfig.repoPath, logger)).map((i) => i.number);
+  const loaded = await rt.records.loadIssueRecords(repoConfig, open);
+  const heldSet = new Set(held);
+  const at = now.toISOString().replace(/\.\d+Z$/, "Z");
+  for (const n of held) {
+    if (loaded.unavailable.has(n) || loaded.records.get(n)?.releaseParked) continue;
+    let stop: { pr: number | null; hold: string } | null = null;
+    try {
+      stop = await codeHost().findReleaseStop(repoConfig, n);
+    } catch (err) {
+      logger.debug(`Could not read the release stop on #${n}: ${err instanceof Error ? err.message : String(err)}`);
+    }
+    let pr = stop?.pr ?? null;
+    if (!pr) {
+      const open = await codeHost().findOpenPromotionPR(repoConfig.githubRepo, repoConfig.productionBranch, repoConfig.baseBranch, repoConfig.repoPath, logger);
+      if (open && releaseIssues(open.body).includes(n)) pr = open.number;
+    }
+    const reason = `${stop?.hold ?? "release-stop"}${pr ? ` on PR #${pr}` : ""} (${repoConfig.github.blockedLabel})`;
+    if (await rt.records.updateIssueRecord(repoConfig, n, (d) => { d.releaseParked = { since: at, reason, owner: PARKED_OWNER, resumeWhen: PARKED_RESUME_WHEN }; })) {
+      out.parked.push(n);
+      logger.info(`Release of #${n} parked: ${reason}; owner ${PARKED_OWNER}`);
+    }
+  }
+  for (const n of open) {
+    if (heldSet.has(n) || loaded.unavailable.has(n) || !loaded.records.get(n)?.releaseParked) continue;
+    if (await rt.records.updateIssueRecord(repoConfig, n, (d) => { delete d.releaseParked; })) {
+      out.restored.push(n);
+      logger.info(`Release of #${n} restored: no longer held`);
+    }
+  }
+  return out;
+}
+
 /** One held issue, worded for the log: whose release, which hold, on which PR. */
 async function describeHeld(repoConfig: RepoConfig, n: number, fallbackPr: number | null, logger: Logger): Promise<string> {
   let stop: { pr: number | null; hold: string } | null = null;
@@ -187,7 +234,7 @@ async function describeHeld(repoConfig: RepoConfig, n: number, fallbackPr: numbe
   }
   const pr = stop?.pr ?? fallbackPr;
   return `release of #${n} held: ${repoConfig.github.blockedLabel}${stop ? ` after ${stop.hold}` : ""}` +
-    `${pr ? ` on PR #${pr}` : ""} — waiting on a person`;
+    `${pr ? ` on PR #${pr}` : ""} — parked until the label is lifted (owner ${PARKED_OWNER}, no maximum age)`;
 }
 
 async function noteHeldRelease(rt: ForemanRuntime, repoConfig: RepoConfig, held: number[], files: number, logger: Logger): Promise<string> {
@@ -268,6 +315,8 @@ export async function tryPromotion(
   // Before the ready-for-prod read: a release PR stays open, and merges, after
   // its issues have lost that label.
   await followRelease(rt, repoConfig, promoLogger, releaseActive);
+  // Where a release-held card shows, kept in step with its labels: nothing is promoted, merged or granted by it.
+  if (releaseActive) await syncReleaseParking(rt, repoConfig, promoLogger);
 
   let issues = await codeHost().findReadyForProdIssues(
     repoConfig.githubRepo, repoConfig.repoPath, repoConfig.lifecycleLabels, promoLogger,

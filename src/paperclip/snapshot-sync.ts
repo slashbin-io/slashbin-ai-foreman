@@ -134,7 +134,7 @@ export class SnapshotSync {
         if (await this.placement.holdStandsAt(id, stage)) continue;
       }
       this.placement.escalatedAt.delete(id);
-      if ((state === blocked || this.placement.blockedAt.has(id)) && stage !== "blocked" && !(await this.blockedByLabel(id))) {
+      if ((state === blocked || this.placement.blockedAt.has(id)) && stage !== "blocked" && stage !== "releaseParked" && !(await this.blockedByLabel(id))) {
         // A block from before this process started stands only while the Foreman's state still holds the issue:
         // security_tests#398 sat Blocked at `release pending` after every hold was gone (2026-10-26).
         // A block read back from the store is that kind of block too.
@@ -188,7 +188,7 @@ export class SnapshotSync {
       if (!(await this.placement.move(id, stage, false, true))) continue;
       this.placement.blockedAt.delete(id);
       this.placement.persistBlock(id);
-      if (stage === "blocked") this.placement.labelBlocked.add(id);
+      if (stage === "blocked" || stage === "releaseParked") this.placement.labelBlocked.add(id);
       else this.placement.labelBlocked.delete(id);
       logger.info(`Paperclip: ${item.repo}#${item.issueNumber} card ${state.slice(7)} → ${want.slice(7)}${state === want ? ", re-assigned" : ""} to match GitHub`);
       await this.notes.note(id, fill(PAPERCLIP_STEPS.synced.note, { detail }), { event: "progress", handoff: handoffTo(stage, item) });
@@ -216,7 +216,7 @@ export class SnapshotSync {
       this.learnSignoff(id, signoff);
       if (c) ids.push([c, id]);
       if (!(await this.placement.move(id, stage, false, true))) continue;
-      if (stage === "blocked") this.placement.labelBlocked.add(id);
+      if (stage === "blocked" || stage === "releaseParked") this.placement.labelBlocked.add(id);
       logger.info(`Paperclip: ${item.repo}#${item.issueNumber} had no card: created at ${stage} to match GitHub`);
       await this.notes.note(id, fill(PAPERCLIP_STEPS.synced.note, { detail }), { event: "progress", handoff: handoffTo(stage, item) });
     }

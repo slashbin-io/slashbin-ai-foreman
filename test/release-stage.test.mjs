@@ -1280,8 +1280,8 @@ test("a release stopped for a person names its issue and hold, once per change �
   const warns = log.at("warn");
   assert.equal(warns.length, 1, "one WARN");
   assert.ok(!STALLED.test(warns[0]), "not reported as an unnamed stall");
-  assert.match(warns[0], /release of #5 held: blocked after predeploy-stop on PR #100 — waiting on a person/);
-  assert.match(warns[0], /release of #6 held: blocked after predeploy-stop on PR #100 — waiting on a person/);
+  assert.match(warns[0], /release of #5 held: blocked after predeploy-stop on PR #100 — parked until the label is lifted \(owner EM, no maximum age\)/);
+  assert.match(warns[0], /release of #6 held: blocked after predeploy-stop on PR #100 — parked until the label is lifted \(owner EM, no maximum age\)/);
 
   // The next check, unchanged: a debug line, no WARN, no comment read, nothing commented.
   log.clear();
@@ -1315,7 +1315,64 @@ test("a held issue with no stop comment is still named, by the release PR that l
   await tryPromotion(rt, repo, log, 23_000, true);
   const warns = log.at("warn");
   assert.equal(warns.length, 1);
-  assert.match(warns[0], /release of #1283 held: blocked on PR #1292 — waiting on a person/);
+  assert.match(warns[0], /release of #1283 held: blocked on PR #1292 — parked until the label is lifted \(owner EM, no maximum age\)/);
+});
+
+// --- ReleaseParking (EM#2985) ---------------------------------------------------------
+
+const WRITES = /^(merge|edit|comment|close|reopen)$/;
+const issuePrWrites = (calls) => calls.filter((c) => (c[0] === "pr" || c[0] === "issue") && WRITES.test(c[1] ?? ""));
+const HELD_WORLD = () => world({ issues: [issue(1283, "release pending", "blocked")], prs: [releasePr(1292, "## Production Promotion\n\n### Issues included\n- #1283: Issue 1283")], compareFiles: 4 });
+
+test("a release-held issue is parked once, keeps its record across passes, and the pass writes nothing to GitHub", async () => {
+  HELD_WORLD();
+  const log = captureLogger();
+  const callsBefore = ghCalls().length;
+  await tryPromotion(rt, repo, log, 24_000, true);
+  const first = (await recordOf(rt, repo, 1283)).releaseParked;
+  assert.ok(first, "a releaseParked record is written");
+  assert.match(first.reason, /PR #1292/);
+  assert.equal(first.owner, "EM");
+  assert.match(first.resumeWhen, /blocked/);
+  assert.equal("priorStage" in first, false, "no prior stage is stored: the stage is derived from the labels");
+  assert.ok(log.at("info").some((m) => /Release of #1283 parked/.test(m)));
+  assert.deepEqual(issuePrWrites(ghCalls().slice(callsBefore)), [], "parking writes no label, comment, merge or close");
+
+  // Much later (no max age): the same record, the same `since`, the issue still open.
+  await tryPromotion(rt, repo, captureLogger(), 24_000 + 40 * STALL_CHECK_CYCLE_INTERVAL, true);
+  assert.deepEqual((await recordOf(rt, repo, 1283)).releaseParked, first);
+  assert.notEqual(gh().issues[1283].state, "CLOSED", "a parked card is never auto-closed");
+});
+
+test("restore: the record goes when `blocked` is lifted, once, and nothing is promoted, merged, granted or labelled by it", async () => {
+  HELD_WORLD();
+  await tryPromotion(rt, repo, captureLogger(), 25_000, true);
+  assert.ok((await recordOf(rt, repo, 1283)).releaseParked);
+
+  const st = gh();
+  st.issues[1283].labels = st.issues[1283].labels.filter((l) => l !== "blocked");
+  writeFileSync(GH_STATE, JSON.stringify(st));
+  const labelsBefore = [...gh().issues[1283].labels];
+  const callsBefore = ghCalls().length;
+  const log = captureLogger();
+  await tryPromotion(rt, repo, log, 25_000 + STALL_CHECK_CYCLE_INTERVAL, true);
+  assert.equal((await recordOf(rt, repo, 1283)).releaseParked, undefined, "restored: the record is gone");
+  assert.equal(log.at("info").filter((m) => /Release of #1283 restored/.test(m)).length, 1);
+  assert.deepEqual(gh().issues[1283].labels, labelsBefore, "labels are what the person left: nothing granted");
+  assert.ok(!labelsBefore.includes("pr approved") && !labelsBefore.includes("verified"), "no sign-off was added");
+  assert.deepEqual(issuePrWrites(ghCalls().slice(callsBefore)), [], "restore triggers no merge, edit, comment or close");
+
+  const again = captureLogger();
+  await tryPromotion(rt, repo, again, 25_000 + 2 * STALL_CHECK_CYCLE_INTERVAL, true);
+  assert.equal(again.at("info").filter((m) => /restored/.test(m)).length, 0, "restored once");
+});
+
+test("a held issue whose record cannot be read is neither parked nor restored this pass", async () => {
+  HELD_WORLD();
+  breakRecords([1283]);
+  const log = captureLogger();
+  await tryPromotion(rt, repo, log, 26_000, true);
+  assert.ok(!log.at("info").some((m) => /parked|restored/.test(m)));
 });
 
 // --- Pure pieces ------------------------------------------------------------------

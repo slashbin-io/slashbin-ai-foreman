@@ -150,6 +150,7 @@ const STAGE_WHEN = {
   awaitingRelease: "In an open release pull request a person merges (the release stage is off); waiting for the release to merge.",
   releasing: "In the release pull request the Foreman owns (`release pending`): Tech Lead approval, SRE deploy and prod verification.",
   awaitingSignoff: "In the release pull request the Foreman owns, but its `foreman/em-sign-off` status is failing: an issue in it lacks `ready for prod release`. The EM signs it off or takes it out of the release.",
+  releaseParked: "Parked: the release PR the Foreman owns carries it, but a stop holds it (`blocked` on a `release pending` issue). It has no maximum age and nothing here promotes, merges or grants it. It returns to Releasing, once, when the `blocked` label is lifted.",
   prodVerifyHeld: "Merged to production, but prod verification held (`prod verification held`); the SRE re-verifies it on a back-off.",
   needsRuling: "Paused for the EM's ruling: a revision (the ruling comment on the PR resumes it), or a skip out of attempts (a person changing the issue resumes it; an agent's edit or label buys one session).",
   blocked: "Needs a person: the issue is labelled `blocked`, or the Foreman declined it or ran out of retries.",

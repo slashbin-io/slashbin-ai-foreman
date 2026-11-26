@@ -275,7 +275,7 @@ export class Placement {
       if (to !== SESSION_STAGE[h.phase]) h.restore = to;
       return true;
     }
-    if (await this.runInFlight(id, to === "done" ? "done" : stageTarget(this.env.cfg, to, to === "blocked" ? this.blockedOwner.get(id) : undefined).bucket)) {
+    if (await this.runInFlight(id, to === "done" ? "done" : stageTarget(this.env.cfg, to, (to === "blocked" || to === "releaseParked") ? this.blockedOwner.get(id) : undefined).bucket)) {
       this.deferredMoves.set(id, to);
       return false;
     }
@@ -286,14 +286,14 @@ export class Placement {
     // Done is a closed issue's, and nobody's (Foreman #112): a released card left on its holder.
     if (to === "done") { bucket = "done"; holder = { assigneeAgentId: null, assigneeUserId: null }; }
     else {
-      const t = stageTarget(this.env.cfg, to, to === "blocked" ? this.blockedOwner.get(id) : undefined);
+      const t = stageTarget(this.env.cfg, to, (to === "blocked" || to === "releaseParked") ? this.blockedOwner.get(id) : undefined);
       bucket = t.bucket;
       label = t.label;
       if (t.agentId) holder = { assigneeAgentId: t.agentId, assigneeUserId: null };
       // Paperclip takes `blocked` only with an unblock descriptor.
       if (bucket === "blocked") {
         // A card held on GitHub says why, as the holder wrote it (`ownsCards`).
-        const action = this.blockedReason.get(id) ?? (to === "blocked" ? this.holdAction.get(id) : undefined) ?? LABEL_BLOCK_ACTION;
+        const action = this.blockedReason.get(id) ?? ((to === "blocked" || to === "releaseParked") ? this.holdAction.get(id) : undefined) ?? LABEL_BLOCK_ACTION;
         holder.unblockDescriptor = { owner: t.agentId ? { agentId: t.agentId } : "board", action };
       }
     }
