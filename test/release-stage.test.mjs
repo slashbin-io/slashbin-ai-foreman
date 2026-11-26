@@ -2432,15 +2432,28 @@ test("a time wait past 24 hours passes the epic the issues belong to", async () 
   assert.equal(booked[0][booked[0].indexOf("--epic") + 1], "880", "the first issue that names an epic gives it");
 });
 
-test("a time wait at or past the endpoint (deploy + 7 days) books nothing and keeps the card open and waiting", async () => {
-  const far = farAway(10);
+test("a 19-day wait still books, with the endpoint a day after its first run, and the card closes at deploy", async () => {
+  const far = farAway(19);
   world(pending(), { approve: { exit: 0 }, deploy: TIME_WAIT(far), prod: V1({ outcome: "hold", hold: "wait-until", eligible_at: far }) });
   assert.equal(await run(), true);
-  assert.equal(agentCalls().filter((c) => c[0] === "em").length, 0, "no booking the routine would refuse");
+  const booked = agentCalls().filter((c) => c[0] === "em");
+  assert.equal(booked.length, 1, "booked, never held for the card");
+  const at = booked[0][booked[0].indexOf("--at") + 1];
+  assert.equal(booked[0][booked[0].indexOf("--endpoint") + 1], wholeSeconds(Date.parse(at) + 86_400_000), "endpoint = first run + 1 day");
   for (const n of [5, 6]) {
-    assert.equal(gh().issues[n].state, "OPEN", `#${n} stays open`);
-    assert.equal(waitNotes(n).length, 1, `#${n} hears the wait`);
+    assert.equal(gh().issues[n].state, "CLOSED", `#${n} closes`);
+    assert.equal(waitNotes(n).length, 0);
   }
+});
+
+test("a 2-day wait keeps the 7-day floor: the endpoint is deploy + 7 days", async () => {
+  const far = farAway(2);
+  world(pending(), { approve: { exit: 0 }, deploy: TIME_WAIT(far), prod: V1({ outcome: "hold", hold: "wait-until", eligible_at: far }) });
+  assert.equal(await run(), true);
+  const booked = agentCalls().filter((c) => c[0] === "em");
+  assert.equal(booked.length, 1);
+  const originatedAt = booked[0][booked[0].indexOf("--originated-at") + 1];
+  assert.equal(booked[0][booked[0].indexOf("--endpoint") + 1], wholeSeconds(Date.parse(originatedAt) + 7 * 86_400_000));
 });
 
 test("a time wait past 24 hours that cannot be booked keeps the card open and waiting, never closed unchecked", async () => {
