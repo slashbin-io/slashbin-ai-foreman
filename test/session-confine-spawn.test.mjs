@@ -177,6 +177,19 @@ test("spawn: a bwrap that cannot start fails the session and still removes the s
   assert.deepEqual(homes(), []);
 });
 
+test("spawn: a checkout whose .git a session rewrote to name the host home refuses the next session", async () => {
+  writeReporter();
+  const hostile = join(tmp, "hostile-checkout");
+  mkdirSync(hostile, { recursive: true });
+  writeFileSync(join(hostile, ".git"), `gitdir: ${hostHome}\n`);
+  const { logger: log } = logger();
+  const r = await spawnClaudeWithOptions("hello", opts({ confine: true, cwd: hostile }), log);
+  assert.equal(r.exitCode, -1);
+  assert.equal(r.stdout, "", "claude never ran");
+  assert.match(r.stderr, /Confined session refused/);
+  assert.deepEqual(homes(), []);
+});
+
 test("spawn: unconfined is unchanged: claude starts directly with the host home and agent socket", async () => {
   writeReporter();
   process.env.AI_AGENT_CONFINE_BWRAP = join(tmp, "no-such-bwrap");

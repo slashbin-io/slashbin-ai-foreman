@@ -29,7 +29,7 @@
 import { execFile, spawn } from "node:child_process";
 import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readlinkSync, realpathSync, rmSync, statSync } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, isAbsolute, join, resolve, sep } from "node:path";
+import { basename, dirname, isAbsolute, join, resolve, sep } from "node:path";
 import { promisify } from "node:util";
 import { stateDir } from "../state-dir.js";
 
@@ -88,7 +88,8 @@ function which(bin: string): string | null {
 
 /**
  * The bubblewrap command that starts `bin args` fenced. Throws when `home` is not a plain folder (missing,
- * a file, or a link): a session that could point its home elsewhere would be handed that place, writable.
+ * a file, or a link): a session that could point its home elsewhere would be handed that place, writable. Also
+ * throws when `cwd/.git` is a gitdir file that fails `worktreeGitDirs`' check.
  */
 export function confineCommand(bin: string, args: string[], opts: ConfineOptions): { bin: string; args: string[] } {
   const { cwd, home, read = [], write = [], bwrap = "bwrap" } = opts;
@@ -136,7 +137,7 @@ export function confineCommand(bin: string, args: string[], opts: ConfineOptions
   ro.add(dirname(dirname(real(process.execPath))));
   for (const p of read) ro.add(real(p));
 
-  const rw = new Set([real(cwd), ...worktreeGitDirs(cwd), ...write.map(real)]);
+  const rw = new Set([real(cwd), ...worktreeGitDirs(cwd, hostHome), ...write.map(real)]);
   // Shallower paths bind first so a deeper one lands on top. A read-only path inside a writable one is bound
   // again after it, so it stays read-only rather than inheriting the writable bind.
   const depth = (p: string) => p.split(sep).length;
@@ -162,25 +163,45 @@ export function confineCommand(bin: string, args: string[], opts: ConfineOptions
 /**
  * The git folders a linked worktree at `cwd` needs besides itself: its `.git` is a file naming a gitdir
  * (`<common>/worktrees/<name>`) outside the checkout, and that gitdir's `commondir` names the shared one with
- * the objects and refs. Both are bound writable; no other checkout's working files are. [] for a plain checkout
- * or none.
+ * the objects and refs. Both are bound writable; no other checkout's working files are. [] for a plain checkout.
+ *
+ * Both pointers are files a session can rewrite, so neither is trusted alone: a gitdir is accepted only when it
+ * is `<common>/worktrees/<name>` and its own `gitdir` file points back at this checkout's `.git`. Pointing them
+ * at a folder the session cannot already write (the host home, say) cannot pass, because the back-pointer would
+ * have to be written there first. A `.git` file that fails the check throws: the session is refused, never
+ * started with the pointer dropped or followed.
  */
-export function worktreeGitDirs(cwd: string): string[] {
+export function worktreeGitDirs(cwd: string, hostHome: string = homedir()): string[] {
   const root = real(cwd);
   const dotGit = join(root, ".git");
+  let st;
   try {
-    if (!statSync(dotGit).isFile()) return [];
-    const m = readFileSync(dotGit, "utf-8").match(/^gitdir:\s*(.+)$/m);
-    if (!m) return [];
-    const gitDir = real(resolve(root, m[1].trim()));
-    const commonFile = join(gitDir, "commondir");
-    const common = existsSync(commonFile) ? readFileSync(commonFile, "utf-8").trim() : "";
-    const dirs = [gitDir];
-    if (common) dirs.push(real(isAbsolute(common) ? common : resolve(gitDir, common)));
-    return dirs.filter((d) => !within(d, root));
+    st = lstatSync(dotGit);
   } catch {
     return [];
   }
+  if (st.isDirectory()) return [];
+  const refuse = (why: string): never => {
+    throw new Error(`Confined session refused: ${dotGit} ${why}`);
+  };
+  if (!st.isFile()) refuse("is neither a folder nor a gitdir file");
+  const m = readFileSync(dotGit, "utf-8").match(/^gitdir:\s*(.+)$/m);
+  if (!m) refuse("names no gitdir");
+  const gitDir = real(resolve(root, m![1].trim()));
+  const read = (f: string) => {
+    try {
+      return readFileSync(join(gitDir, f), "utf-8").trim();
+    } catch {
+      return refuse(`names ${gitDir}, which has no ${f} file`);
+    }
+  };
+  const commonRaw = read("commondir");
+  const common = real(isAbsolute(commonRaw) ? commonRaw : resolve(gitDir, commonRaw));
+  if (gitDir !== join(common, "worktrees", basename(gitDir))) refuse(`names ${gitDir}, which is not a worktree of ${common}`);
+  if (real(resolve(gitDir, read("gitdir"))) !== dotGit) refuse(`names ${gitDir}, which belongs to another checkout`);
+  const home = real(hostHome);
+  for (const d of [gitDir, common]) if (within(home, d)) refuse(`resolves to ${d}, which would cover the home`);
+  return [gitDir, common].filter((d) => !within(d, root));
 }
 
 /** Why a fenced session cannot start on this host, or [] when it can: bubblewrap must start a sandbox. */

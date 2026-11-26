@@ -95,3 +95,57 @@ test("read-only: a mandatory read file inside the writable checkout cannot be ch
   assert.deepEqual(out, { gate: "readonly", checkout: "yes" });
   assert.equal(readFileSync(gate, "utf8"), "{}");
 });
+
+/** A main repo with one linked worktree, under `tmp/<name>`. */
+const repoWithWorktree = (name) => {
+  const base = join(tmp, name);
+  const main = join(base, "main");
+  mkdirSync(main, { recursive: true });
+  git(main, "init", "-q", "-b", "main");
+  git(main, "-c", "user.name=T", "-c", "user.email=t@example.invalid", "commit", "-q", "--allow-empty", "-m", "init");
+  const wt = join(base, "wt");
+  git(main, "worktree", "add", "-q", "-b", name, wt);
+  return { base, main, wt, admin: join(main, ".git", "worktrees", "wt") };
+};
+
+test("worktree pointers: a .git or commondir a session rewrote to name the host home refuses the session", async () => {
+  setStateDir(join(tmp, "state"));
+  const { base, wt, admin } = repoWithWorktree("hostile");
+  const hostHome = join(base, "host-home");
+  mkdirSync(join(hostHome, ".ssh"), { recursive: true });
+  writeFileSync(join(hostHome, ".ssh", "id_ed25519"), "dummy");
+  const home = await createSessionHome();
+  const good = readFileSync(join(wt, ".git"), "utf8");
+  assert.equal(worktreeGitDirs(wt, hostHome).length, 2, "the untouched worktree passes");
+
+  // R1/R2: .git names the host home (or a folder inside it) directly.
+  for (const target of [hostHome, join(hostHome, ".ssh")]) {
+    writeFileSync(join(wt, ".git"), `gitdir: ${target}\n`);
+    assert.throws(() => worktreeGitDirs(wt, hostHome), /Confined session refused/);
+    assert.throws(() => confineCommand("sh", ["-c", "true"], { cwd: wt, home }), /Confined session refused/);
+  }
+  // A forged admin folder inside the checkout whose commondir names the host home.
+  const forged = join(wt, "forged", "worktrees", "x");
+  mkdirSync(forged, { recursive: true });
+  writeFileSync(join(forged, "commondir"), hostHome);
+  writeFileSync(join(forged, "gitdir"), join(wt, ".git"));
+  writeFileSync(join(wt, ".git"), `gitdir: ${forged}\n`);
+  assert.throws(() => worktreeGitDirs(wt, hostHome), /not a worktree of/);
+
+  // R4: .git untouched, the writable admin folder's commondir rewritten to the host home.
+  writeFileSync(join(wt, ".git"), good);
+  const commondir = readFileSync(join(admin, "commondir"), "utf8");
+  writeFileSync(join(admin, "commondir"), hostHome);
+  assert.throws(() => worktreeGitDirs(wt, hostHome), /not a worktree of/);
+  writeFileSync(join(admin, "commondir"), commondir);
+
+  // Another checkout's admin folder: its back-pointer names that checkout, not this one.
+  const other = join(base, "wt2");
+  git(join(base, "main"), "worktree", "add", "-q", "-b", "hostile2", other);
+  writeFileSync(join(wt, ".git"), readFileSync(join(other, ".git"), "utf8"));
+  assert.throws(() => worktreeGitDirs(wt, hostHome), /another checkout/);
+
+  // A common dir that would cover the host home.
+  writeFileSync(join(wt, ".git"), good);
+  assert.throws(() => worktreeGitDirs(wt, join(base, "main", ".git", "hooks")), /cover the home/);
+});
