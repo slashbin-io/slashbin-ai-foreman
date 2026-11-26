@@ -252,6 +252,30 @@ export type UnstickOutcome =
    */
   | { kind: "refused"; detail: string; resetAtMs?: number };
 
+/** What the receiver needs to file the follow-up for a shipped hold that stayed unresolved. */
+export interface VerifyFollowUpInput {
+  /** The merged PR the hold waits on; 0 when there is none. */
+  prNumber: number;
+  /** The held card's issue number. */
+  card: number;
+  /** When the hold first began: ISO UTC, "Z", whole seconds (`VerifyHold.originatedAt`). */
+  originatedAt: string;
+  /** `VerifyHold.reason`, verbatim. */
+  reason: string;
+  /** `VerifyHold.decision.verdict`; "" when no decision is recorded. */
+  verdict: string;
+  /** `VerifyHold.decision.evidence`; [] when none. */
+  evidence: readonly string[];
+  /** The card's epic, or null when it has none. */
+  epic: number | null;
+  /** Who owns the follow-up. */
+  owner: string;
+}
+
+export type VerifyFollowUpOutcome =
+  | { kind: "filed" | "existing"; issue: number; url: string }
+  | { kind: "failed"; detail: string };
+
 export interface Unsticker {
   unstick(
     repo: RepoConfig, config: AgentConfig, issue: number, kind: string, reason: string, logger: Logger,
@@ -278,6 +302,13 @@ export interface Unsticker {
    * what was booked (one line, for the issues' close comment), or null when nothing was; never throws.
    */
   scheduleProdFollowUp?(repo: RepoConfig, config: AgentConfig, pr: number, issues: readonly number[], at: string, logger: Logger): Promise<string | null>;
+  /**
+   * File the follow-up card for a shipped verify hold that stayed unresolved past its maximum age, so the card can
+   * close as "shipped, verification unresolved" without the open question being lost. `existing` means the same hold
+   * was already filed (the filing is idempotent); `failed` means nothing was filed, and the caller must NOT close the
+   * card. Never throws.
+   */
+  fileVerifyFollowUp?(repo: RepoConfig, config: AgentConfig, input: VerifyFollowUpInput, logger: Logger): Promise<VerifyFollowUpOutcome>;
 }
 
 /** The agent roles, each named as its field on ForemanPlugin. */
