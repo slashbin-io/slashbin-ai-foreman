@@ -8,7 +8,7 @@ import { join } from "node:path";
 import { QA_PENDING_HOLD, HEAD_MOVED_HOLD, NOT_APPROVED_HOLD } from "../dist/session/protocol.js";
 import { reviewViaTechLead } from "../dist/plugins/tech-lead.js";
 import { parseReviewTrailerRecords } from "../dist/plugins/agent-cli.js";
-import { runQaBeforeMerge, qaBeforeMergeApplies, qaVerdictMarker, qaFailLines, qaGateBody, applyQaGate, executeQa } from "../dist/qa-report.js";
+import { runQaBeforeMerge, qaBeforeMergeApplies, qaVerdictMarker, qaFailLines, qaFailLinesForHead, qaGateBody, applyQaGate, executeQa } from "../dist/qa-report.js";
 import { rulingState } from "../dist/github/reports.js";
 import { sessionFallbackStage, MOVES, STAGE_MEANING, SESSION_FALLBACK_STAGE } from "../dist/lifecycle.js";
 import { TOOLING_HOLDS, verifyHoldPlan } from "../dist/phases/verify.js";
@@ -118,6 +118,20 @@ test("4: revise is handed QA's failing lines, cut at 'Pages checked:'", () => {
   assert.doesNotMatch(lines, /foreman-qa/);
   assert.match(src("phases/revise.ts"), /latestQaFailLines/);
   assert.match(src("phases/revise-workflow.ts"), /qaFeedback/);
+});
+
+test("4: revise gets a QA FAIL only when it judged the current head (#748: a stale FAIL drove no-commit rounds)", () => {
+  const OLD = "c".repeat(40), HEAD = "e".repeat(40);
+  const report = (sha, verdict, extra = "") => `## QA Report\n<!-- foreman-qa sha=${sha} verdict=${verdict} -->\n\n${extra}\nPages checked: /`;
+  // A FAIL on an older head is stale: nothing handed over.
+  assert.equal(qaFailLinesForHead([report(OLD, "FAIL", "old clipping")], HEAD), undefined);
+  // The FAIL on the current head is handed over, even when an older FAIL is newer in the thread.
+  assert.match(qaFailLinesForHead([report(HEAD, "FAIL", "live clipping"), report(OLD, "FAIL", "old")], HEAD), /live clipping/);
+  // A re-run PASS on the same head replaces its FAIL.
+  assert.equal(qaFailLinesForHead([report(HEAD, "FAIL", "x"), report(HEAD, "PASS")], HEAD), undefined);
+  // A short sha in the marker still matches the full head.
+  assert.match(qaFailLinesForHead([report(HEAD.slice(0, 7), "FAIL", "short")], HEAD), /short/);
+  assert.match(src("phases/revise.ts"), /latestQaFailLines\(repoConfig, pending\.pr\.number, head,/);
 });
 
 test("4: a QA FAIL report counts as a review round for the rounds alert", () => {

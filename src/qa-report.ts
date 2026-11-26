@@ -573,12 +573,30 @@ export function qaFailLines(body: string): string {
   return (end === -1 ? lines : lines.slice(0, end)).join("\n").trim();
 }
 
-/** The newest QA FAIL report on PR `pr`, reduced to its failing lines; undefined when there is none or GitHub cannot say. */
-export async function latestQaFailLines(repoConfig: RepoConfig, pr: number, logger: Logger): Promise<string | undefined> {
+const QA_REPORT_HEAD = /^## QA Report\n<!-- foreman-qa sha=(\S+) verdict=(\S+) -->/;
+
+/**
+ * The failing lines a revise session is handed for `head`: from the newest QA Report on that head, when it is a FAIL.
+ * A FAIL on an older head is stale — the branch has moved since QA judged it — and is never handed over, nor is one a
+ * newer report on the same head (a re-run PASS) replaced. Pure.
+ *
+ * WHY: A docs PR (2026-11-25) handed three revise sessions a FAIL judged on `cece11d` while the head was
+ * `ec206dc`. Each answered the stale report ("already fixed at head, no new commit") instead of the Tech Lead's live
+ * finding, and the unchanged head went back to review three times (~7.4M review tokens, 11 rounds on the PR).
+ */
+export function qaFailLinesForHead(bodies: readonly string[], head: string): string | undefined {
+  const onHead = bodies.filter((b) => {
+    const m = QA_REPORT_HEAD.exec(b);
+    return !!m && !!head && (m[1] === head || (m[1].length >= 7 && head.startsWith(m[1])));
+  });
+  const last = onHead[onHead.length - 1];
+  return last && QA_FAIL_REPORT.test(last) ? qaFailLines(last) : undefined;
+}
+
+/** QA's failing lines for PR `pr` at `head` (qaFailLinesForHead); undefined when there are none or GitHub cannot say. */
+export async function latestQaFailLines(repoConfig: RepoConfig, pr: number, head: string, logger: Logger): Promise<string | undefined> {
   try {
-    const fails = (await codeHost().commentBodies(repoConfig, pr)).filter((b) => QA_FAIL_REPORT.test(b));
-    const last = fails[fails.length - 1];
-    return last ? qaFailLines(last) : undefined;
+    return qaFailLinesForHead(await codeHost().commentBodies(repoConfig, pr), head);
   } catch (e) {
     logger.warn(`QA: PR #${pr} report not read for the revise session: ${String(e).slice(0, 200)}`);
     return undefined;
