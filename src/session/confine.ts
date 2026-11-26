@@ -13,7 +13,9 @@
 //     home's path so the CLI finds its home where it expects it. The host home itself is absent. The one
 //     thing carried in is the CLI's sign-in, `~/.claude/.credentials.json`, read-only;
 //   - the agent binary and the Node install, read-only;
-//   - `cwd` and `write`, writable; `read`, read-only.
+//   - `cwd` and `write`, writable, with a linked worktree's git folders (`worktreeGitDirs`); `read`, read-only,
+//     even where it lies inside a writable folder;
+//   - never another session's scratch home: the folder they live in is masked wherever a bind exposes it.
 // The network is shared: a session must reach the model, GitHub and its MCP servers.
 //
 // Ported from slashbin-ai-team `lib/confine.js` (PR #147). That repo is private and this one is public, so
@@ -25,9 +27,9 @@
 // HTTPS credential prompt with the session's own GH_TOKEN, so a push needs nothing from the host.
 
 import { execFile, spawn } from "node:child_process";
-import { existsSync, lstatSync, mkdirSync, mkdtempSync, readlinkSync, realpathSync, rmSync, statSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readlinkSync, realpathSync, rmSync, statSync } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, join, resolve, sep } from "node:path";
+import { dirname, isAbsolute, join, resolve, sep } from "node:path";
 import { promisify } from "node:util";
 import { stateDir } from "../state-dir.js";
 
@@ -134,17 +136,51 @@ export function confineCommand(bin: string, args: string[], opts: ConfineOptions
   ro.add(dirname(dirname(real(process.execPath))));
   for (const p of read) ro.add(real(p));
 
-  const rw = new Set([real(cwd), ...write.map(real)]);
-  // A read-only path inside a writable one is already visible; shallower paths bind first so a deeper
-  // writable one lands on top.
+  const rw = new Set([real(cwd), ...worktreeGitDirs(cwd), ...write.map(real)]);
+  // Shallower paths bind first so a deeper one lands on top. A read-only path inside a writable one is bound
+  // again after it, so it stays read-only rather than inheriting the writable bind.
   const depth = (p: string) => p.split(sep).length;
-  const roList = [...ro].filter((p) => existsSync(p) && ![...rw].some((w) => within(p, w)));
+  const byDepth = (a: string, b: string) => depth(a) - depth(b);
+  const insideRw = (p: string) => [...rw].some((w) => within(p, w));
+  const roAll = [...ro].filter((p) => existsSync(p));
   const rwList = [...rw].filter((p) => existsSync(p));
-  for (const p of roList.sort((a, b) => depth(a) - depth(b))) out.push("--ro-bind", p, p);
-  for (const p of rwList.sort((a, b) => depth(a) - depth(b))) out.push("--bind", p, p);
+  for (const p of roAll.filter((p) => !insideRw(p)).sort(byDepth)) out.push("--ro-bind", p, p);
+  for (const p of rwList.sort(byDepth)) out.push("--bind", p, p);
+
+  // Every scratch home lives in one folder, under the state directory, which can sit inside a bound checkout
+  // (the Foreman managing itself, with the default state directory `.`). Masked there, a session cannot
+  // read, change or delete another's home; its own stays reachable at the host home's path.
+  const homes = real(sessionHomesDir());
+  if ([...roAll, ...rwList].some((p) => within(homes, p)) && existsSync(homes)) out.push("--tmpfs", homes);
+
+  for (const p of roAll.filter(insideRw).sort(byDepth)) out.push("--ro-bind", p, p);
 
   out.push("--chdir", real(cwd), "--", binPath ?? bin, ...args);
   return { bin: bwrap, args: out };
+}
+
+/**
+ * The git folders a linked worktree at `cwd` needs besides itself: its `.git` is a file naming a gitdir
+ * (`<common>/worktrees/<name>`) outside the checkout, and that gitdir's `commondir` names the shared one with
+ * the objects and refs. Both are bound writable; no other checkout's working files are. [] for a plain checkout
+ * or none.
+ */
+export function worktreeGitDirs(cwd: string): string[] {
+  const root = real(cwd);
+  const dotGit = join(root, ".git");
+  try {
+    if (!statSync(dotGit).isFile()) return [];
+    const m = readFileSync(dotGit, "utf-8").match(/^gitdir:\s*(.+)$/m);
+    if (!m) return [];
+    const gitDir = real(resolve(root, m[1].trim()));
+    const commonFile = join(gitDir, "commondir");
+    const common = existsSync(commonFile) ? readFileSync(commonFile, "utf-8").trim() : "";
+    const dirs = [gitDir];
+    if (common) dirs.push(real(isAbsolute(common) ? common : resolve(gitDir, common)));
+    return dirs.filter((d) => !within(d, root));
+  } catch {
+    return [];
+  }
 }
 
 /** Why a fenced session cannot start on this host, or [] when it can: bubblewrap must start a sandbox. */
