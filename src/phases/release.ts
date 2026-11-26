@@ -512,6 +512,8 @@ export const DEPLOY_STOPS: Readonly<Record<string, string>> = {
 
 /** The longest a time hold is waited for before the release is asked about again: a far `eligible_at` is re-checked daily. */
 export const MAX_TIME_HOLD_MS = 24 * 3_600_000;
+/** How long after a release deployed its deferred check may still run: the follow-up's endpoint is the deploy time plus this (EM epic #2985). */
+export const FOLLOW_UP_WINDOW_MS = 7 * 86_400_000;
 
 /**
  * What an unmerged deploy's hold means (agent contract v1). The deployer's own
@@ -1186,15 +1188,32 @@ async function announceWait(
  * A check observable only after the next 24 hours is a scheduled Paperclip follow-up, not an open card; the card
  * closes on everything observable now (owner, 2026-11-15: security_tests#407/#412/#429/#436 sat live in production for
  * up to 19 days waiting on a monthly cron). The EM books the follow-up, which re-runs the SRE's prod verification at
- * that time and reopens the issues if it fails. False, and the release waits as before, when the time is within
- * 24 hours or nothing was booked: a card is never closed on a check nobody will run.
+ * that time; a failure or an inconclusive run files a follow-up card, and the closed issues stay closed. The booking
+ * carries the release's origin (when it deployed), a finite endpoint (the origin plus `FOLLOW_UP_WINDOW_MS`) and the
+ * epic, so a re-arm can never push the check past the window. False, and the release waits as before, when the time is
+ * within 24 hours, at or past the endpoint, or nothing was booked: a card is never closed on a check nobody will run.
  */
 async function deferToFollowUp(
   rt: ForemanRuntime, repoConfig: RepoConfig, config: AgentConfig, rel: ProdRelease, v: Extract<Verdict, { kind: "wait" }>, logger: Logger,
 ): Promise<boolean> {
   const at = Date.parse(v.retryAt);
   if (!Number.isFinite(at) || at - now() <= MAX_TIME_HOLD_MS) return false;
-  const booked = await roleFor("unstick", config)?.scheduleProdFollowUp?.(repoConfig, config, rel.pr, rel.issues, v.retryAt, logger);
+  const originMs = Date.parse(rel.mergedAt ?? rel.since);
+  const originatedAt = iso(Number.isFinite(originMs) ? originMs : now()).replace(/\.\d+Z$/, "Z");
+  const endpoint = iso(Date.parse(originatedAt) + FOLLOW_UP_WINDOW_MS).replace(/\.\d+Z$/, "Z");
+  if (at >= Date.parse(endpoint)) {
+    logger.warn(`Release PR #${rel.pr}: its check at ${v.retryAt} is at or past the follow-up endpoint ${endpoint} (deployed ${originatedAt}); waiting on the card instead`);
+    return false;
+  }
+  let epic: number | null = null;
+  const label = repoConfig.epicRefLabel;
+  if (label) {
+    for (const n of rel.issues) {
+      try { epic = epicRefs(await codeHost().readIssueBody(repoConfig, n), label)[0] ?? null; } catch { epic = null; }
+      if (epic !== null) break;
+    }
+  }
+  const booked = await roleFor("unstick", config)?.scheduleProdFollowUp?.(repoConfig, config, rel.pr, rel.issues, v.retryAt, { originatedAt, endpoint, epic }, logger);
   if (!booked) {
     logger.warn(`Release PR #${rel.pr}: its follow-up at ${v.retryAt} could not be booked; waiting on the card instead`);
     return false;
@@ -1203,7 +1222,7 @@ async function deferToFollowUp(
   const why = statedReason(v.reason, v.hold) ?? "the part of the SRE's production check that cannot be observed before then";
   logger.info(`Release PR #${rel.pr}: ${why} is a scheduled follow-up at ${v.retryAt} (${booked}); closing on the rest`);
   await passRelease(rt, repoConfig, { ...rel, retryAt: undefined }, rel.phase === "held" ? "prodReverified" : "prodVerified", v.evidence, logger,
-    `everything observable now passed; ${why} is re-checked at ${utcMinute(v.retryAt)} by a scheduled follow-up (${booked.replace(/^scheduled /, "routine ")}), which reopens this issue if it fails`);
+    `everything observable now passed; ${why} is re-checked at ${utcMinute(v.retryAt)} by a scheduled follow-up (${booked.replace(/^scheduled /, "routine ")}); if the check fails or cannot be run, a follow-up card is filed and this issue stays closed`);
   return true;
 }
 

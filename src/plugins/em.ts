@@ -6,7 +6,7 @@ import { pickEnv, SESSION_ENV_ESSENTIALS } from "../session/env.js";
 import { cliTail, lastLine, runAgentCli, type CliRun } from "./agent-cli.js";
 import { isWorkedCard } from "../metrics/runs.js";
 import { detectRefusal } from "../refusal.js";
-import type { ForemanPlugin, Unsticker, UnstickOutcome, PluginCatalogEntry, VerifyFollowUpInput, VerifyFollowUpOutcome } from "./contract.js";
+import type { ForemanPlugin, Unsticker, UnstickOutcome, PluginCatalogEntry, VerifyFollowUpInput, VerifyFollowUpOutcome, FollowUpOrigin } from "./contract.js";
 
 /**
  * The EM (`<emRepoPath>/bin/em.mjs`) as the unstick plugin (#103, EM#1150 f3):
@@ -240,13 +240,18 @@ export const EM_FOLLOW_UP_MAX_DURATION_MS = 2 * 60_000;
  * its `scheduled <routine> <title> <spec>` line, or null on any failure. Never throws.
  */
 export async function scheduleProdFollowUpViaEm(
-  repoConfig: RepoConfig, agentConfig: AgentConfig, pr: number, issues: readonly number[], at: string, logger: Logger,
+  repoConfig: RepoConfig, agentConfig: AgentConfig, pr: number, issues: readonly number[], at: string, origin: FollowUpOrigin, logger: Logger,
 ): Promise<string | null> {
   const em = agentConfig.emRepoPath;
   if (!em) return null;
   try {
+    // The scheduler takes whole-second UTC (`...Z`, no milliseconds) and refuses anything else with exit 2.
+    // Round up, so the check is never due before the instant the SRE named.
+    const atMs = Date.parse(at);
+    const atWhole = Number.isFinite(atMs) ? new Date(Math.ceil(atMs / 1000) * 1000).toISOString().replace(/\.\d{3}Z$/, "Z") : at;
     const r = await runAgentCli(em, "scripts/routines/deferred-verify.mjs",
-      ["schedule", "--repo", repoConfig.githubRepo, "--pr", String(pr), "--issues", issues.join(","), "--at", at],
+      ["schedule", "--repo", repoConfig.githubRepo, "--pr", String(pr), "--issues", issues.join(","), "--at", atWhole,
+        "--originated-at", origin.originatedAt, "--endpoint", origin.endpoint, ...(origin.epic !== null ? ["--epic", String(origin.epic)] : [])],
       buildEmEnv(agentConfig), agentConfig, EM_FOLLOW_UP_MAX_DURATION_MS);
     const line = r.stdout.trim().split("\n").pop() ?? "";
     if (!r.timedOut && r.code === 0 && line.startsWith("scheduled ")) return line;

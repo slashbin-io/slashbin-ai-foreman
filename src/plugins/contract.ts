@@ -27,6 +27,9 @@ export type PluginRole =
   | "unstick" // takes stuck work to someone who can move it
   | "changeSignal"; // says which repos changed, so quiet ones are polled less (ChangeSignal)
 
+/** The bounds of a scheduled deferred check (ISO UTC, `Z`, whole seconds). */
+export interface FollowUpOrigin { readonly originatedAt: string; readonly endpoint: string; readonly epic: number | null }
+
 /** What a change signal answers: the repos that changed since the cursor it was given, and the cursor to ask with next. */
 export interface ChangeReport {
   /** `owner/name` of each repo that changed since the cursor, or `"all"` when it cannot tell (the first call, a gap). A repo it has no events for must be reported on every call, so it is polled in full. */
@@ -300,8 +303,10 @@ export interface Unsticker {
    * Book a scheduled follow-up that re-runs a release's production verification at `at` (ISO UTC), for a check that
    * cannot be observed within the next 24 hours, so the release's issues can close now (owner, 2026-11-15). Returns
    * what was booked (one line, for the issues' close comment), or null when nothing was; never throws.
+   * `origin` bounds the follow-up: when the release deployed, the last instant the check may still run, and the epic
+   * the issues belong to (null for none). The receiver cannot move the endpoint.
    */
-  scheduleProdFollowUp?(repo: RepoConfig, config: AgentConfig, pr: number, issues: readonly number[], at: string, logger: Logger): Promise<string | null>;
+  scheduleProdFollowUp?(repo: RepoConfig, config: AgentConfig, pr: number, issues: readonly number[], at: string, origin: FollowUpOrigin, logger: Logger): Promise<string | null>;
   /**
    * File the follow-up card for a shipped verify hold that stayed unresolved past its maximum age, so the card can
    * close as "shipped, verification unresolved" without the open question being lost. `existing` means the same hold
