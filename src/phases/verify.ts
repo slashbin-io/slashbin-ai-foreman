@@ -11,7 +11,7 @@ import { roleFor } from "../plugins/registry.js";
 import type { VerifyResult } from "../plugins/contract.js";
 import { applyQaGate, isDeliveredVerdict, postMergeQaNeeded, postMergeQaState, qaApplies, qaBeforeMergeApplies, realQaDeps } from "../qa-report.js";
 import { isUpstreamBlocked } from "../upstream-backoff.js";
-import { fieldTable, type VerifyHold } from "../issue-records.js";
+import { fieldTable, holdOrigin, type VerifyHold } from "../issue-records.js";
 import { report as reportStall, resolve as resolveStall, type StallTable } from "../stall-clock.js";
 import { clearCheckPass, deferredCheck, recordCheckFailure, releasedByDefect, releasedIssues, resolveFreedStalls, syncCheckDefects, type CheckDefect } from "./check-defect.js";
 import { handoffSubject } from "../unstick.js";
@@ -496,7 +496,8 @@ export async function tryVerify(
   for (const n of unmatched) {
     // Labelled merged, but no merged PR closes it — nothing to verify against.
     const reason = `"${repoConfig.lifecycleLabels.prMerged}" but no merged PR into ${repoConfig.baseBranch} closes it`;
-    held[n] = { heldAt: new Date().toISOString(), prNumber: 0, reason: "no-merged-pr", attempts: verifyRetry.maxAttempts };
+    const now = new Date().toISOString();
+    held[n] = { heldAt: now, originatedAt: holdOrigin(undefined, now), prNumber: 0, reason: "no-merged-pr", attempts: verifyRetry.maxAttempts };
     vlog.warn(`#${n}: ${reason} — needs a person`);
     await emit(rt, { kind: "blocked", item: itemOf(repoConfig, n), reason: reason }, repoConfig, vlog);
   }
@@ -634,7 +635,8 @@ export async function tryVerify(
     const kept = { ...held };
     if (plan.kind === "wait") {
       for (const n of target.issueNumbers) {
-        kept[n] = { heldAt: new Date().toISOString(), prNumber: target.prNumber, reason, attempts: kept[n]?.attempts ?? 0, retryAt: plan.retryAt };
+        const now = new Date().toISOString();
+        kept[n] = { heldAt: now, originatedAt: holdOrigin(kept[n], now), prNumber: target.prNumber, reason, attempts: kept[n]?.attempts ?? 0, retryAt: plan.retryAt };
       }
       await rt.records.saveFieldChanges(repoConfig, "verifyHeld", persisted, kept);
       scheduled = { resumeAt: plan.retryAt, waitReason: reason };
@@ -663,7 +665,8 @@ export async function tryVerify(
       // The same failure keeps its first evidence, so a retry that fails the same way is not a new question for the EM.
       const prior = kept[n]?.reason === reason ? kept[n]?.decision : undefined;
       const d = prior ?? decision;
-      kept[n] = { heldAt: new Date().toISOString(), prNumber: target.prNumber, reason, attempts, ...(d ? { decision: d } : {}) };
+      const now = new Date().toISOString();
+      kept[n] = { heldAt: now, originatedAt: holdOrigin(kept[n], now), prNumber: target.prNumber, reason, attempts, ...(d ? { decision: d } : {}) };
     }
     await rt.records.saveFieldChanges(repoConfig, "verifyHeld", persisted, kept);
     const final = attempts >= verifyRetry.maxAttempts;
