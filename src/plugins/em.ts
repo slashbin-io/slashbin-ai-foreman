@@ -280,7 +280,7 @@ export async function fileVerifyFollowUpViaEm(
   try {
     const payload = {
       repo: repoConfig.githubRepo, card: input.card, prNumber: input.prNumber, originatedAt: input.originatedAt,
-      outcome: "expired", reason: input.reason, established: [],
+      outcome: input.outcome ?? "expired", reason: input.reason, established: [],
       notEstablished: input.verdict ? [input.verdict] : ["no verdict recorded for the hold"],
       evidence: input.evidence, epic: input.epic, owner: input.owner,
     };
