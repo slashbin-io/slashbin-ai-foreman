@@ -36,6 +36,11 @@ test("a PASS with no shot is void when the PR changed a whole-app build input", 
   }
 });
 
+test("a 0-shot PASS on a PR of only client test files is not void; a test file beside a component still is", () => {
+  assert.equal(isVoidQaPass(0, ["client/src/components/ui/__tests__/a.test.tsx", "client/src/b.spec.ts"]), false);
+  assert.equal(isVoidQaPass(0, ["client/src/a.test.tsx", "client/src/Button.tsx"]), true);
+});
+
 test("before the merge, a fresh 0-shot PASS on a build-input-only change holds page-unplaced", () => {
   assert.equal(decideQaBeforeMerge(ran("PASS", 0, 0), SHA, ["package.json", "vite.config.ts"]).reason, "qa-held-page-unplaced");
 });
