@@ -397,7 +397,8 @@ async function expireHold(rt: ForemanRuntime, repoConfig: RepoConfig, config: Ag
       `(\`${rel.hold ?? "no reason recorded"}\`) for ${age}, the maximum. It was never verified. The open question moved to ${url}; this issue is closed.`, logger),
   }, logger);
   logger.warn(`Release PR #${rel.pr}: hold expired after ${age}; closed ${res.done.map((n) => `#${n}`).join(", ") || "none"}${res.kept.length ? `, kept ${res.kept.map((n) => `#${n}`).join(", ")}` : ""}`);
-  const kept = rel.issues.filter((n) => !res.done.includes(n));
+  const completed = new Set(res.done);
+  const kept = rel.issues.filter((n) => !completed.has(n));
   // Cards still open (a filing that failed, a close that did not land, a card a person blocked): wait one window, so
   // the stages behind this release are not starved by it.
   if (kept.length > 0) rt.memory.releaseBackoff.start(`${repoConfig.githubRepo}#${rel.pr}`, config.backoff.releaseRetry);

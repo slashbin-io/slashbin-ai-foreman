@@ -631,7 +631,7 @@ Default: `86400000` (24 h) · Env: `AI_AGENT_BACKOFF_PREDEPLOY_STOP_RECHECK_MS`
 
 ### `backoff.prodVerifyRetry`
 
-A release that merged but whose prod verification held or failed. The SRE re-verifies production after one window, longer each time, with no attempt cap: the issue stays open at `prod verification held` until a pass closes it or a person steps in. A `hold=wait-until-…` time the SRE reports wins when it is later. A new head on the production branch since the last attempt makes the release due now, once per head. Default 10 min rising to 6 h.
+A release that merged but whose prod verification held or failed. The SRE re-verifies production after one window, longer each time, with no attempt cap: the issue stays open at `prod verification held` until a pass closes it, a person steps in, or it reaches `holdMaxAgeMs`. A `hold=wait-until-…` time the SRE reports wins when it is later. A new head on the production branch since the last attempt makes the release due now, once per head. Default 10 min rising to 6 h.
 
 | Field | Default | Env |
 |---|---|---|

@@ -54,6 +54,7 @@ export const PAPERCLIP_STEPS = Object.freeze({
   prodHeld: { stage: "prodVerifyHeld", note: "in production, prod verification held; re-verifying on a back-off" },
   releaseVerifyWait: { stage: null, note: "in production, deploy verified; waiting until {at} for {reason}; nothing needed from anyone" },
   prodVerified: { stage: "done", note: "verified in production; closed" },
+  prodExpired: { stage: "done", note: "shipped; production verification unresolved past its maximum hold age; closed with a follow-up" },
   releaseClosed: { stage: null, note: "release PR #{pr} closed without merging; waiting for the next release" },
   backoffPause: { stage: null, note: "paused: {upstream} back-off: {reason}" },
   backoffResume: { stage: null, note: "resumed after back-off" },

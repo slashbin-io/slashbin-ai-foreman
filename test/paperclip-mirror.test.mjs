@@ -2067,3 +2067,13 @@ test("customer label: undefined labels, no registry client and a registry outage
   }
   assert.equal(out.log.lines.filter(([l, m]) => l === "warn" && /registry customer labels unavailable/.test(m)).length, 1);
 });
+
+test("a prodExpired transition notes the unresolved close, never 'verified in production'", async () => {
+  const fake = fakePaperclip();
+  const { mirror } = mirrorOn(fake);
+  await mirror.onClaim(item, repoConfig, logger());
+  await mirror.onState(item, "prodVerifyHeld", "released", repoConfig, logger(), "prodExpired");
+  const notes = (fake.comments["row-1"] ?? []).join("\n");
+  assert.match(notes, /verification unresolved/);
+  assert.doesNotMatch(notes, /verified in production; closed/);
+});

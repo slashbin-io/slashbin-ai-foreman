@@ -230,7 +230,7 @@ export class PaperclipMirror implements WorkObserver {
     }
     switch (event.kind) {
       case "claim": return this.onClaim(event.item);
-      case "transition": return this.onState(event.item, event.from, event.to);
+      case "transition": return this.onState(event.item, event.from, event.to, undefined, undefined, event.move);
       case "prLink": return this.onPrLink(event.item, event.prUrl);
       case "blocked": return this.onBlocked(event.item, event.reason, undefined, undefined, PAPERCLIP_STEPS.blocked, "changesRequested", event.owner, event.at);
       case "escalated": return this.onBlocked(event.item, event.reason, undefined, undefined, PAPERCLIP_STEPS.escalated, event.at);
@@ -271,8 +271,9 @@ export class PaperclipMirror implements WorkObserver {
     await this.note(id, retry ? PAPERCLIP_RETRY_NOTE : step.note, { event: "implementStart" });
   }
 
-  async onState(item: WorkItem, _from: PriorState, to: WorkState, _repoConfig?: unknown, _logger?: Logger): Promise<void> {
-    const step = STATE_STEP[to];
+  async onState(item: WorkItem, _from: PriorState, to: WorkState, _repoConfig?: unknown, _logger?: Logger, move?: string): Promise<void> {
+    // An expired hold lands at `released` like a verified one, but nothing was verified: its own note says so.
+    const step = move === "prodExpired" ? PAPERCLIP_STEPS.prodExpired : STATE_STEP[to];
     if (!step) return;
     if (to !== "queued" && sameItem(this.building, item)) this.building = null;
     if (to !== "queued") this.claimed.delete(this.keyOf(item));
