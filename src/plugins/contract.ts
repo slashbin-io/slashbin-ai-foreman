@@ -221,7 +221,20 @@ export interface QaRunner {
   check(
     repo: RepoConfig, config: AgentConfig, args: { repo: string; pr: number; out: string; local: boolean }, logger: Logger,
   ): Promise<QaOutcome>;
+  /**
+   * Optional: the builder's fast deterministic check of its own branch (`qa.mjs preflight --local`): page overflow and
+   * clipping at every viewport, no model call, never a verdict. `ref` is a sha QA can fetch from origin. Never rejects.
+   */
+  preflight?(
+    repo: RepoConfig, config: AgentConfig, args: { repo: string; ref: string; out: string }, logger: Logger,
+  ): Promise<PreflightOutcome>;
 }
+
+/** What a preflight run said. `summary` is QA's compact per-finding text (findings) or the reason (could-not-run). */
+export type PreflightOutcome =
+  | { kind: "clean"; summary: string }
+  | { kind: "findings"; summary: string }
+  | { kind: "could-not-run"; summary: string };
 
 /** How an unstick call was answered. The Foreman never clears a block on any of them. */
 export type UnstickOutcome =

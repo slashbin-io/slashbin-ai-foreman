@@ -1,5 +1,6 @@
 // The revise phase: address review feedback on an open PR.
 
+import { preflightBeforeReview } from "./preflight-gate.js";
 import type { AgentConfig, RepoConfig } from "../config.js";
 import type { Logger } from "../logger.js";
 import type { SessionEvent, SessionReport } from "../adapters.js";
@@ -214,6 +215,9 @@ export async function tryRevision(
     if (result.success) {
       rt.memory.revisionFailureCount.set(repoName, 0);
       rt.memory.revisionEscalated.delete(repoName);
+
+      // Builder preflight: the revision's pushed head is checked and fixed here, before the PR goes back to review.
+      if (!result.noCommit) await preflightBeforeReview(rt.trust, repoConfig, config, revLogger, runAbort.signal, { number: pending.pr.number, headBranch }, pending.issueNumbers);
 
       if (result.noCommit) {
         // The session completed and the read after it showed the head unchanged: the round counts now. A count that

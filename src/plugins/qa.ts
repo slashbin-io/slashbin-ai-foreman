@@ -5,7 +5,7 @@ import type { Logger } from "../logger.js";
 import { pickEnv, SESSION_ENV_ESSENTIALS } from "../session/env.js";
 import type { QaManifest, QaOutcome } from "../qa-report.js";
 import { runAgentCli, type CliRun } from "./agent-cli.js";
-import type { ForemanPlugin, QaRunner, PluginCatalogEntry } from "./contract.js";
+import type { ForemanPlugin, QaRunner, PluginCatalogEntry, PreflightOutcome } from "./contract.js";
 
 /**
  * slashbin_ai_qa (`<qaPath>/bin/qa.mjs check`) as the QA plugin (EM#1150 f3).
@@ -77,6 +77,11 @@ export function buildQaEnv(agentConfig: AgentConfig): Record<string, string> {
 }
 
 /** Exit 0/1/3 with a readable manifest is a result; a timeout, any other exit or a missing manifest is an error. */
+/** Cap on the findings text kept from a preflight run (it goes into a session prompt and a PR comment). */
+const PREFLIGHT_SUMMARY_MAX = 6000;
+/** A preflight is a boot and a capture, minutes: a stuck one is killed at 20 so the PR is not held behind it. */
+const PREFLIGHT_MAX_MS = 20 * 60_000;
+
 export function readOutcome(r: CliRun, out: string, logger: Logger): QaOutcome {
   if (r.timedOut) {
     const step = qaStepOf(r.stderr);
@@ -118,6 +123,7 @@ export class QaPlugin implements ForemanPlugin {
     this.qa = {
       covers: (repo, config) => this.covers(repo.githubRepo, config),
       check: (_repo, config, args, logger) => (args.local ? this.checkLocal(config, args, logger) : this.checkDev(config, args, logger)),
+      preflight: (_repo, config, args, logger) => this.preflight(config, args, logger),
     };
   }
 
@@ -190,5 +196,30 @@ export class QaPlugin implements ForemanPlugin {
     const args = ["--keys", qaBearerKeys(config).join(","), QA_KEY_CONFIGS, "--", "node", join(qa, "bin/qa.mjs"), "check", "--local", "--repo", repo, "--pr", String(pr), "--out", out];
     const r = await runAgentCli(em, runner, args, buildQaEnv(config), config, QA_MAX_DURATION_MS);
     return readOutcome(r, out, logger);
+  }
+
+  /**
+   * The builder's preflight: `qa.mjs preflight --local` under `qaSecretsRunner` (registry bearer only, as `checkLocal`).
+   * Exit 0 clean, 1 findings, 3 could-not-run; anything else, a timeout or a missing setting is could-not-run too,
+   * never a finding: the caller must not block on a check that did not run. Never throws.
+   */
+  private async preflight(config: AgentConfig, { repo, ref, out }: { repo: string; ref: string; out: string }, logger: Logger): Promise<PreflightOutcome> {
+    const em = config.emRepoPath;
+    const qa = config.qaPath;
+    const runner = config.qaSecretsRunner;
+    if (!em || !qa || !runner) return { kind: "could-not-run", summary: "emRepoPath, qaPath and qaSecretsRunner must all be set" };
+    try {
+      rmSync(join(out, "manifest.json"), { force: true });
+      const args = ["--keys", qaBearerKeys(config).join(","), QA_KEY_CONFIGS, "--", "node", join(qa, "bin/qa.mjs"), "preflight", "--local", "--repo", repo, "--ref", ref, "--out", out];
+      const r = await runAgentCli(em, runner, args, buildQaEnv(config), config, PREFLIGHT_MAX_MS);
+      if (r.timedOut) return { kind: "could-not-run", summary: `timed out after ${PREFLIGHT_MAX_MS / 60_000} minutes` };
+      const text = r.stdout.trim().slice(0, PREFLIGHT_SUMMARY_MAX);
+      if (r.code === 0) return { kind: "clean", summary: text };
+      if (r.code === 1) return { kind: "findings", summary: text };
+      logger.warn(`QA preflight: exit ${r.code}; tail: ${(r.stderr || r.stdout).trim().slice(-300)}`);
+      return { kind: "could-not-run", summary: r.code === 3 ? (text || "QA could not run it") : `exit code ${r.code}` };
+    } catch (e) {
+      return { kind: "could-not-run", summary: String(e instanceof Error ? e.message : e).slice(0, 200) };
+    }
   }
 }

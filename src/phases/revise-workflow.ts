@@ -30,6 +30,8 @@ export async function revisePRFeedback(
   knownBeforeSha?: string | null,
   /** The PR's own head branch: the only branch this session may push to. */
   headBranch: string = config.featureBranch,
+  /** "preflight": the feedback is the builder preflight's findings on the branch (before review), not a QA FAIL. */
+  feedbackKind: "qa" | "preflight" = "qa",
 ): Promise<RevisionResult> {
   logger.info(`Starting PR revision for ${config.name}`);
 
@@ -43,7 +45,9 @@ export async function revisePRFeedback(
   const prContext = prNumber
     ? `\n\nCONTEXT: PR #${prNumber} needs revision. PR branch: ${headBranch} (push only to this branch). Linked issues: ${(issueNumbers || []).map(n => `#${n}`).join(", ")}. Read the review comments on PR #${prNumber} to understand what changes are requested.`
     : "";
-  const qaContext = qaFeedback
+  const qaContext = qaFeedback && feedbackKind === "preflight"
+    ? `\n\nBUILDER PREFLIGHT FOUND VISUAL DEFECTS on this branch (QA booted it locally and measured the pages this PR touches). Fix each one; the shots it names are the PNGs to open. There are no review comments yet; the findings below are the whole task:\n\n${qaFeedback}`
+    : qaFeedback
     ? `\n\nQA FAILED THIS PR (it booted the approved head locally before the merge). Fix what it found; the full report is the newest "## QA Report" comment on PR #${prNumber}:\n\n${qaFeedback}`
     : "";
 
