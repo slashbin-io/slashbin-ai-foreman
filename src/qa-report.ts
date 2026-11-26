@@ -440,12 +440,15 @@ const CLIENT_PREFIX = "client/";
  */
 const BUILD_INPUT = /^(client\/)?(vite\.config\.[^/]+|react-compiler\.config\.[^/]+|tsconfig[^/]*\.json|package\.json|package-lock\.json|pnpm-lock\.yaml|yarn\.lock|postcss\.config\.[^/]+|tailwind\.config\.[^/]+|index\.html)$/;
 
+/** A unit-test file renders on no page: a PR of only these has nothing for QA to shoot (console PR #1820). */
+const TEST_FILE = /(^|\/)__tests__\/|\.(test|spec)\.[cm]?[jt]sx?$/;
+
 /**
  * A PASS that captured no shot while the PR changed client code checked nothing, so it is never a verdict
  * (console PR #1589: QA could not read its lazy routes and passed 0 pages). Pure.
  */
 export function isVoidQaPass(shots: number, changed: readonly string[]): boolean {
-  return shots === 0 && changed.some((f) => f.startsWith(CLIENT_PREFIX) || BUILD_INPUT.test(f));
+  return shots === 0 && changed.some((f) => (f.startsWith(CLIENT_PREFIX) && !TEST_FILE.test(f)) || BUILD_INPUT.test(f));
 }
 
 /** A PR comment opening with this is the EM's request to re-run QA on that merged PR. */
