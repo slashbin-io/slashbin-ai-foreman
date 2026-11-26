@@ -245,8 +245,12 @@ export async function scheduleProdFollowUpViaEm(
   const em = agentConfig.emRepoPath;
   if (!em) return null;
   try {
+    // The scheduler takes whole-second UTC (`...Z`, no milliseconds) and refuses anything else with exit 2.
+    // Round up, so the check is never due before the instant the SRE named.
+    const atMs = Date.parse(at);
+    const atWhole = Number.isFinite(atMs) ? new Date(Math.ceil(atMs / 1000) * 1000).toISOString().replace(/\.\d{3}Z$/, "Z") : at;
     const r = await runAgentCli(em, "scripts/routines/deferred-verify.mjs",
-      ["schedule", "--repo", repoConfig.githubRepo, "--pr", String(pr), "--issues", issues.join(","), "--at", at,
+      ["schedule", "--repo", repoConfig.githubRepo, "--pr", String(pr), "--issues", issues.join(","), "--at", atWhole,
         "--originated-at", origin.originatedAt, "--endpoint", origin.endpoint, ...(origin.epic !== null ? ["--epic", String(origin.epic)] : [])],
       buildEmEnv(agentConfig), agentConfig, EM_FOLLOW_UP_MAX_DURATION_MS);
     const line = r.stdout.trim().split("\n").pop() ?? "";

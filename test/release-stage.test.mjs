@@ -2407,7 +2407,7 @@ test("a time wait past 24 hours books the EM's follow-up, then closes the issues
   assert.equal(booked.length, 1, "one follow-up booked");
   const rel0 = (await prodReleases())[100];
   const originatedAt = wholeSeconds(Date.parse(rel0.mergedAt));
-  assert.deepEqual(booked[0].slice(1), ["schedule", "--repo", REPO, "--pr", "100", "--issues", "5,6", "--at", far,
+  assert.deepEqual(booked[0].slice(1), ["schedule", "--repo", REPO, "--pr", "100", "--issues", "5,6", "--at", far.replace(".000Z", "Z"),
     "--originated-at", originatedAt, "--endpoint", wholeSeconds(Date.parse(originatedAt) + 7 * 86_400_000)], "origin and endpoint, no epic");
   for (const n of [5, 6]) {
     assert.equal(gh().issues[n].state, "CLOSED", `#${n} closes`);
@@ -2461,7 +2461,7 @@ test("a stored release already waiting past 24 hours is closed onto a follow-up 
   await seedRelease(rt, repo, { pr: 100, headSha: HEAD, issues: [5], phase: "merged", mergeSha: MERGE, mergedAt: t0, attempts: 0, since: t0, retryAt: far, waitNoted: far });
   await run();
   assert.equal(agentCalls().filter((c) => c[1] === "verify").length, 0, "nothing is verified");
-  assert.deepEqual(agentCalls().filter((c) => c[0] === "em").map((c) => c[c.indexOf("--at") + 1]), [far], "booked at the SRE's time");
+  assert.deepEqual(agentCalls().filter((c) => c[0] === "em").map((c) => c[c.indexOf("--at") + 1]), [far.replace(".000Z", "Z")], "booked at the SRE's time");
   assert.equal(gh().issues[5].state, "CLOSED");
   assert.ok(closeNotes(5)[0].includes(`${far.slice(0, 16).replace("T", " ")} UTC`), closeNotes(5)[0]);
   assert.equal((await prodReleases())[100]?.phase, "soaking");

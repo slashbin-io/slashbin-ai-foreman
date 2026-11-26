@@ -47,3 +47,13 @@ test("scheduleProdFollowUpViaEm: a refusal (exit 2) or no result line is null; e
   assert.equal(await scheduleProdFollowUpViaEm(repo, fakeEm(`console.log("hello");`), 41, [5], AT, ORIGIN, logger), null);
   assert.equal(await scheduleProdFollowUpViaEm(repo, { sessionEnv: [] }, 41, [5], AT, ORIGIN, logger), null);
 });
+
+test("scheduleProdFollowUpViaEm: --at reaches the scheduler in whole seconds (it refuses milliseconds), rounded up", async () => {
+  for (const [given, sent] of [["2026-11-29T12:00:00.000Z", "2026-11-29T12:00:00Z"], ["2026-11-29T12:00:00.250Z", "2026-11-29T12:00:01Z"]]) {
+    const log = join(mkTmp("sched-log-"), "argv.json");
+    const cfg = fakeEm(record(log, `console.log("scheduled R1 t");`));
+    await scheduleProdFollowUpViaEm(repo, cfg, 41, [5], given, ORIGIN, logger);
+    const argv = JSON.parse(readFileSync(log, "utf8"));
+    assert.equal(argv[argv.indexOf("--at") + 1], sent);
+  }
+});
