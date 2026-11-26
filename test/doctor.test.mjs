@@ -61,7 +61,7 @@ function arrange(cfg, state) {
     // HOME is the case dir: the doctor reads Claude Code's config there, never the operator's.
     const env = { ...process.env, HOME: dir, PATH: `${bin}:${process.env.PATH}`, FAKE_GH_STATE: stateFile, FAKE_GH_LOG: logFile, ...extraEnv };
     delete env.CLAUDE_CONFIG_DIR;
-    for (const k of Object.keys(env)) if (k.startsWith("AI_AGENT_")) delete env[k];
+    for (const k of Object.keys(env)) if (k.startsWith("AI_AGENT_") && !(k in extraEnv)) delete env[k];
     for (const k of ["FOREMAN_GITHUB_TOKEN", "TECHLEAD_GITHUB_KEY", "SRE_GITHUB_KEY"]) if (!(k in extraEnv)) delete env[k];
     const r = spawnSync(process.execPath, [DOCTOR, cfgPath], { cwd: dir, env, encoding: "utf8" });
     const calls = readFileSync(logFile, "utf8").split("\n").filter(Boolean).map((l) => JSON.parse(l));
@@ -207,4 +207,18 @@ test("the default config enables both: PASS workSource and PASS codeHost", () =>
   const r = run({ FOREMAN_GITHUB_TOKEN: TOKEN, TECHLEAD_GITHUB_KEY: TOKEN, SRE_GITHUB_KEY: TOKEN });
   assert.match(r.out, /^PASS  workSource — "github"$/m, r.out);
   assert.match(r.out, /^PASS  codeHost — "github"$/m, r.out);
+});
+
+test("session confinement: off passes without a probe; on with no working bwrap is a FAIL; on with one passes", () => {
+  const stub = join(bin, "bwrap-ok");
+  writeFileSync(stub, "#!/bin/sh\nexit 0\n");
+  chmodSync(stub, 0o755);
+  const repos = [{ name: "a", githubRepo: "acme/a" }];
+  const off = arrange({ repos }, { "acme/a": ready() })({ AI_AGENT_CONFINE_BWRAP: "/nonexistent/bwrap" });
+  assert.match(off.out, /^PASS  session confinement — confineSessions off/m, off.out);
+  const bad = arrange({ confineSessions: true, repos }, { "acme/a": ready() })({ AI_AGENT_CONFINE_BWRAP: "/nonexistent/bwrap" });
+  assert.equal(bad.status, 1, bad.out);
+  assert.match(bad.out, /^FAIL  session confinement — confineSessions is on but bubblewrap \(\/nonexistent\/bwrap\) cannot start a sandbox/m, bad.out);
+  const good = arrange({ confineSessions: true, repos }, { "acme/a": ready() })({ AI_AGENT_CONFINE_BWRAP: stub });
+  assert.match(good.out, /^PASS  session confinement — bubblewrap \(.*bwrap-ok\) starts a sandbox$/m, good.out);
 });
