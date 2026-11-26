@@ -6,7 +6,7 @@ import { pickEnv, SESSION_ENV_ESSENTIALS } from "../session/env.js";
 import { cliTail, lastLine, runAgentCli, type CliRun } from "./agent-cli.js";
 import { isWorkedCard } from "../metrics/runs.js";
 import { detectRefusal } from "../refusal.js";
-import type { ForemanPlugin, Unsticker, UnstickOutcome, PluginCatalogEntry } from "./contract.js";
+import type { ForemanPlugin, Unsticker, UnstickOutcome, PluginCatalogEntry, VerifyFollowUpInput, VerifyFollowUpOutcome } from "./contract.js";
 
 /**
  * The EM (`<emRepoPath>/bin/em.mjs`) as the unstick plugin (#103, EM#1150 f3):
@@ -257,6 +257,42 @@ export async function scheduleProdFollowUpViaEm(
   return null;
 }
 
+/**
+ * File the EM's follow-up card for a shipped verify hold that stayed unresolved
+ * (`scripts/routines/verify-disposition.mjs file`). The EM owns the card's text and its idempotency
+ * (one card per hold origin); the Foreman only asks. `failed` on any other result, so the caller never closes
+ * a card whose follow-up is not filed. Never throws.
+ */
+export async function fileVerifyFollowUpViaEm(
+  repoConfig: RepoConfig, agentConfig: AgentConfig, input: VerifyFollowUpInput, logger: Logger,
+): Promise<VerifyFollowUpOutcome> {
+  const em = agentConfig.emRepoPath;
+  if (!em) return { kind: "failed", detail: "emRepoPath not configured" };
+  const where = `${repoConfig.githubRepo}#${input.card}`;
+  // The EM script shells out to `gh`, which reads only GH_TOKEN / GITHUB_TOKEN: hand it the EM's own token under both.
+  const emToken = process.env.EM_GITHUB_TOKEN;
+  if (!emToken) return { kind: "failed", detail: "EM_GITHUB_TOKEN not set" };
+  try {
+    const payload = {
+      repo: repoConfig.githubRepo, card: input.card, prNumber: input.prNumber, originatedAt: input.originatedAt,
+      outcome: "expired", reason: input.reason, established: [],
+      notEstablished: input.verdict ? [input.verdict] : ["no verdict recorded for the hold"],
+      evidence: input.evidence, epic: input.epic, owner: input.owner,
+    };
+    const r = await runAgentCli(em, "scripts/routines/verify-disposition.mjs", ["file", "--json", JSON.stringify(payload), "--post"],
+      { ...buildEmEnv(agentConfig), GH_TOKEN: emToken, GITHUB_TOKEN: emToken }, agentConfig, EM_FOLLOW_UP_MAX_DURATION_MS);
+    const m = /^follow-up (filed|existing) (\S+)#(\d+) (\S+)$/.exec(r.stdout.trim().split("\n").pop() ?? "");
+    if (!r.timedOut && r.code === 0 && m) return { kind: m[1] as "filed" | "existing", issue: Number(m[3]), url: m[4] };
+    const detail = `${r.timedOut ? "timed out" : `exit ${r.code}`}: ${cliTail(r)}`;
+    logger.warn(`EM verify follow-up for ${where} not filed (${detail})`);
+    return { kind: "failed", detail };
+  } catch (err) {
+    const detail = err instanceof Error ? err.message : String(err);
+    logger.warn(`EM verify follow-up for ${where} failed: ${detail}`);
+    return { kind: "failed", detail };
+  }
+}
+
 export class EmPlugin implements ForemanPlugin {
   readonly id = "em";
   readonly roles = ["unstick"] as const;
@@ -267,7 +303,7 @@ export class EmPlugin implements ForemanPlugin {
     requires: { config: ["emRepoPath", "unstickEscalationOwner"], env: ["EM_GITHUB_TOKEN"] },
     whenOff: "Stuck or held work stays where it is until a person clears it; nothing escalates it.",
   };
-  readonly unstick: Unsticker = { unstick: unstickViaEm, grantState: grantStateViaEm, publishedKinds: publishedKindsViaEm, epicDecompose: epicDecomposeViaEm, scheduleProdFollowUp: scheduleProdFollowUpViaEm };
+  readonly unstick: Unsticker = { unstick: unstickViaEm, grantState: grantStateViaEm, publishedKinds: publishedKindsViaEm, epicDecompose: epicDecomposeViaEm, scheduleProdFollowUp: scheduleProdFollowUpViaEm, fileVerifyFollowUp: fileVerifyFollowUpViaEm };
   enabled(config: AgentConfig): boolean {
     return Boolean(config.emRepoPath);
   }
