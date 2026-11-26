@@ -101,6 +101,7 @@ const WHEN = {
   releaseVerifyWait: "The release merged and its deploy verified, but the SRE's production check names a later time it can finish (`wait-until`): said once per time, with the reason; the card stays where it is and nothing is needed from anyone.",
   prodHeld: "The release merged to the production branch but its prod verification (or its 30-minute soak) held or failed: the issue is reopened if it was closed and re-verified on a back-off.",
   prodVerified: "The SRE verified the release in production: the Foreman tags the merge commit and closes the issue with one comment.",
+  prodExpired: "A shipped hold reached its maximum age with production still unverified: the Foreman files a follow-up, then closes the issue with one comment saying verification is unresolved.",
   releaseClosed: "That release pull request is closed without merging; the task stays in review until the next one.",
   backoffPause: "A GitHub or Claude limit pauses the build in progress.",
   backoffResume: "The build in progress resumes after that limit clears.",

@@ -187,7 +187,7 @@ six status buckets. Each is sent to Paperclip under its
 | `in_progress` | `claim`, `releaseQueued`, `reviseStarted`, `reviewStarted`, `verifyStarted` | `statusMap.in_progress`, else `in_progress` |
 | `in_review` | `inReview`, `approved`, `awaitingVerify`, `verifyWaiting`, `releaseWaiting`, `prodHeld` | `statusMap.in_review`, else `in_review` |
 | `blocked` | `blocked`, `escalated`, `waiting` | `statusMap.blocked`, else `blocked` |
-| `done` | `released`, `inProduction`, `prodVerified` | `statusMap.done`, else `done` |
+| `done` | `released`, `inProduction`, `prodVerified`, `prodExpired` | `statusMap.done`, else `done` |
 | `cancelled` | never by default | `statusMap.cancelled`, else `cancelled` |
 
 Merging to the base branch is a note, not a status: the work is not in production yet. Once
@@ -248,6 +248,7 @@ knows of are redacted from every note before it is sent.
 | `prodHeld` | The release merged to the production branch but its prod verification (or its 30-minute soak) held or failed: the issue is reopened if it was closed and re-verified on a back-off. | `prodVerifyHeld` | `in production, prod verification held; re-verifying on a back-off` |
 | `releaseVerifyWait` | The release merged and its deploy verified, but the SRE's production check names a later time it can finish (`wait-until`): said once per time, with the reason; the card stays where it is and nothing is needed from anyone. | unchanged | `in production, deploy verified; waiting until {at} for {reason}; nothing needed from anyone` |
 | `prodVerified` | The SRE verified the release in production: the Foreman tags the merge commit and closes the issue with one comment. | `done` | `verified in production; closed` |
+| `prodExpired` | A shipped hold reached its maximum age with production still unverified: the Foreman files a follow-up, then closes the issue with one comment saying verification is unresolved. | `done` | `shipped; production verification unresolved past its maximum hold age; closed with a follow-up` |
 | `releaseClosed` | That release pull request is closed without merging; the task stays in review until the next one. | unchanged | `release PR #{pr} closed without merging; waiting for the next release` |
 | `backoffPause` | A GitHub or Claude limit pauses the build in progress. | unchanged | `paused: {upstream} back-off: {reason}` |
 | `backoffResume` | The build in progress resumes after that limit clears. | unchanged | `resumed after back-off` |

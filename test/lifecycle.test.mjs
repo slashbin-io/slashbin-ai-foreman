@@ -106,6 +106,7 @@ const LABELS = [
   ["alreadyReleased", "ready for prod release", true, ["--remove-label", "ready for prod release"]],
   ["prodVerified", "release pending", true, ["--remove-label", "release pending"]],
   ["prodReverified", "prod verification held", true, ["--remove-label", "prod verification held"]],
+  ["prodExpired", "prod verification held", true, ["--remove-label", "prod verification held"]],
   ["prodHeld", "release pending", true, ["--remove-label", "release pending", "--add-label", "prod verification held"]],
   ["soakHeld", "pr approved", true, ["--remove-label", "pr approved", "--add-label", "prod verification held"]],
   ["soakHeld", "prod verification held", false, null],

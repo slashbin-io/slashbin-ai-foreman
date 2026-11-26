@@ -66,6 +66,12 @@ export interface ProdRelease {
   /** ISO time the release stage started it. */
   since: string;
   /**
+   * ISO time (UTC, Z, whole seconds) this release's production-verification hold first began: set once on the first hold, kept
+   * across every re-hold, cleared when the release passes. Its age against `backoff.holdMaxAgeMs` is the hold's age
+   * (src/phases/verify-expiry.ts). A held record written before this field is stamped once, from the pass that first sees it.
+   */
+  originatedAt?: string;
+  /**
    * Merged by someone else (a person, or before this stage existed): the
    * release stage adopted it for prod verification, soak and close, and never
    * asked the Tech Lead or the SRE to deploy it.

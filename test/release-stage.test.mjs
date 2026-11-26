@@ -778,6 +778,8 @@ test("merged but held: reopened at `prod verification held`, re-verified on the 
   const rel = (await prodReleases())[100];
   assert.equal(rel.phase, "held");
   assert.ok(Date.parse(rel.retryAt) - Date.now() >= DEFAULT_BACKOFF.prodVerifyRetry.baseMs - 60_000, "on the prodVerifyRetry back-off");
+  assert.match(rel.originatedAt, /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ$/, "the hold's origin is stamped once, whole seconds, Z");
+  const origin = rel.originatedAt;
 
   assert.equal(await run(2), false, "not before retryAt");
   await editRel(100, (r) => { r.retryAt = new Date(Date.now() - 1000).toISOString(); });

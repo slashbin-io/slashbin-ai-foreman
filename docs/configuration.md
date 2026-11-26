@@ -532,6 +532,7 @@ which only means it retries sooner.
 | `paperclip` | 1 s, 1 s | `maxAttempts` 3 |
 | `registry` | 1 s, 1 s | `maxAttempts` 3 |
 | `predeployStopRecheckMs` | 24 h | — |
+| `holdMaxAgeMs` | off | — |
 | `stuckMergeGraceMs` | 15 min | — |
 | `maxCiBounces` | — | `2` |
 
@@ -630,13 +631,19 @@ Default: `86400000` (24 h) · Env: `AI_AGENT_BACKOFF_PREDEPLOY_STOP_RECHECK_MS`
 
 ### `backoff.prodVerifyRetry`
 
-A release that merged but whose prod verification held or failed. The SRE re-verifies production after one window, longer each time, with no attempt cap: the issue stays open at `prod verification held` until a pass closes it or a person steps in. A `hold=wait-until-…` time the SRE reports wins when it is later. A new head on the production branch since the last attempt makes the release due now, once per head. Default 10 min rising to 6 h.
+A release that merged but whose prod verification held or failed. The SRE re-verifies production after one window, longer each time, with no attempt cap: the issue stays open at `prod verification held` until a pass closes it, a person steps in, or it reaches `holdMaxAgeMs`. A `hold=wait-until-…` time the SRE reports wins when it is later. A new head on the production branch since the last attempt makes the release due now, once per head. Default 10 min rising to 6 h.
 
 | Field | Default | Env |
 |---|---|---|
 | `baseMs` | `600000` (10 min) | `AI_AGENT_BACKOFF_PROD_VERIFY_RETRY_BASE_MS` |
 | `capMs` | `21600000` (6 h) | `AI_AGENT_BACKOFF_PROD_VERIFY_RETRY_CAP_MS` |
 | `factor` | `2` | `AI_AGENT_BACKOFF_PROD_VERIFY_RETRY_FACTOR` |
+
+### `backoff.holdMaxAgeMs`
+
+The longest a card that SHIPPED may stay held awaiting proof in production (`prod verification held`). Past it the card closes as "shipped, verification unresolved" and a follow-up card carries the open question (EM plugin `fileVerifyFollowUp`); a failed filing never closes it. A card that has not shipped (blocked, a dev verify hold, awaiting sign-off) never expires. 0 is off, the default; the env alias `FOREMAN_HOLD_MAX_AGE` (ms) is read when the `AI_AGENT_BACKOFF_HOLD_MAX_AGE_MS` name is unset. Production runs 604800000 (7 days).
+
+Default: `0` · Env: `AI_AGENT_BACKOFF_HOLD_MAX_AGE_MS`
 
 ### `backoff.upstream`
 

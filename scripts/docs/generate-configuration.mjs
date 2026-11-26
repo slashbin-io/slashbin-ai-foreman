@@ -253,7 +253,7 @@ out(
     const limit = limitOf(v);
     return `| ${code(g)} | ${sequence(v) || "none"} | ${limit ? `${code(limit)} ${v[limit]}` : "none"} |`;
   }),
-  ...groups.filter(([, v]) => !isWindow(v)).map(([g, v]) => `| ${code(g)} | ${typeof v === "number" && /Ms$/.test(g) ? formatWait(v) : "—"} | ${/Ms$/.test(g) ? "—" : code(v)} |`),
+  ...groups.filter(([, v]) => !isWindow(v)).map(([g, v]) => `| ${code(g)} | ${typeof v === "number" && /Ms$/.test(g) ? (v > 0 ? formatWait(v) : "off") : "—"} | ${/Ms$/.test(g) ? "—" : code(v)} |`),
   "",
   "Override any part; the rest keep their defaults:",
   "",
