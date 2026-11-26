@@ -181,7 +181,8 @@ It is repo-level (issue 0), once per epic and closed issue, and never holds the 
 CLOSE check for the epic and closes it only if every child is done: closing is the hand-off to the PO, and nothing
 else makes it (foreman#151).
 `epic-decompose` fires for an open epic in `epicRepo` that carries `approved`, none of `approved-for-human`, `blocked`
-or `owner-hold`, and either has no child or is at a feature boundary: every filed child closed while the epic's
+or the operator-hold label (each means a person must act; the EM's `NOT_DUE` list is the source), and no open native blocked-by issue (the EM's test: a prerequisite
+releases itself when it closes), and either has no child or is at a feature boundary: every filed child closed while the epic's
 numbered `**Decomposition plan` comment still lists unfiled features (the close gate's rule, EM#1074). Both tests are the EM's own (`epic-coverage.mjs`, `scripts/lib/epic-children.mjs`, `scripts/lib/epic-plan.mjs`, `scripts/lib/epic-decompose.mjs`),
 never copied here: the Foreman asks `bin/em.mjs decompose-candidates --json` (a board scan, so at most every 30 minutes,
 and not at all while a call is open) and gets `[{epic, approvedAt, after?, requeue?}]`, oldest approval first (`after` is the last-filed child at a boundary). An epic whose Paperclip card is `blocked` is left out of that list (the EM reads the card, `scripts/paperclip/blocked-epic-cards.mjs`; the Foreman cannot, its card index is per configured repo), so a blocked card is never dispatched and nothing retries it. An EM escalation or timeout leaves the epic's card blocked on its owner; the card leaving `blocked` is the only re-queue, shown as `requeue: n` (the EM's count of its own escalation markers) which makes a new question, not a timer or attempt counter. It raises the oldest epic that has
