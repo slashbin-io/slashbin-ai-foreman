@@ -106,6 +106,18 @@ for (const [role, needs] of [["workSource", "select work from"], ["codeHost", "o
   else line("PASS", "shipper config", config.metrics?.enabled === true ? "receiver URL and both signing keys set" : "metrics off, nothing to ship");
 }
 
+// The daemon refuses to start (exit 78) when confineSessions is on and bubblewrap cannot start a sandbox (#404).
+// The same probe the start gate runs, without the gate's sweep: the doctor only reads.
+{
+  const { confineBwrap, confineProblems } = await import(join(root, "dist", "session", "confine.js"));
+  if (config.confineSessions !== true) line("PASS", "session confinement", "confineSessions off, no sandbox needed");
+  else {
+    const problems = await confineProblems({ bwrap: confineBwrap() });
+    if (problems.length) line("FAIL", "session confinement", problems.join("; "));
+    else line("PASS", "session confinement", `bubblewrap (${confineBwrap()}) starts a sandbox`);
+  }
+}
+
 // --- Tokens (set or unset; a value is never printed) ---
 
 if (process.env.FOREMAN_GITHUB_TOKEN) {
