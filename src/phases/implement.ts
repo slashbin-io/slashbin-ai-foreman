@@ -8,6 +8,7 @@ import type { SessionEvent, SessionReport } from "../adapters.js";
 import { selectWork, heldWork, emit, advance, wantsSessionReports, workSourceFor } from "../work-source.js";
 import { isApprovedUnbuilt } from "../lifecycle.js";
 import { implementApprovedIssues } from "./implement-workflow.js";
+import { preflightBeforeReview } from "./preflight-gate.js";
 import type { ImplementationResult } from "../session/protocol.js";
 import { isUpstreamBlocked, tryAcquire, reportRunResult } from "../upstream-backoff.js";
 import { runnerName } from "../refusal.js";
@@ -754,7 +755,10 @@ export async function tryBatchImplementation(
       // Widening to allActionable (vs just actionableIssues) is the
       // slashbin-ai-foreman#18 fix: if the skill picked an out-of-batch
       // approved issue, the resulting PR still gets correctly labeled.
-      const referencedAll = (await codeHost().findOpenFeaturePR(repoConfig))?.issueNumbers ?? null;
+      const openPr = await codeHost().findOpenFeaturePR(repoConfig);
+      // Builder preflight: QA's deterministic local check of the pushed head, fixed in this phase, before the PR goes to review.
+      if (openPr) await preflightBeforeReview(rt.trust, repoConfig, config, repoLogger, runAbort.signal, openPr, openPr.issueNumbers);
+      const referencedAll = openPr?.issueNumbers ?? null;
       const allActionable = (await workSourceFor(repoConfig).selectEligible?.(repoConfig, repoLogger) ?? []).map((w) => w.issueNumber);
       const labelingCandidates = Array.from(new Set([...actionableIssues, ...allActionable]));
       const matched = referencedAll
