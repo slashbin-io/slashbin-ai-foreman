@@ -19,3 +19,5 @@ builder-mcp/
 company-record/
 .claude/worktrees/
 .github-records.json
+# Scratch homes of fenced builder sessions (src/session/confine.ts), under the state dir
+session-homes/
