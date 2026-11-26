@@ -8,11 +8,13 @@ import { join } from "node:path";
 import { mkTmp } from "./tmp-dir.mjs";
 import { fileVerifyFollowUpViaEm, EmPlugin } from "../dist/plugins/em.js";
 
+process.env.EM_GITHUB_TOKEN = "em-token-fixture";
+process.env.GH_TOKEN = "foreman-own-token-fixture";
 const logger = { info() {}, warn() {}, error() {}, debug() {}, child() { return this; } };
 const repo = { name: "r", githubRepo: "o/r" };
 const INPUT = {
   prNumber: 41, card: 7, originatedAt: "2026-11-01T00:00:00Z", reason: "prod-verify-failed",
-  verdict: "the order never reached the label queue", evidence: ["log line 1", "log line 2"], epic: 12, owner: "em",
+  verdict: "the order never reached the label queue", evidence: ["https://github.com/o/r/issues/1", "https://github.com/o/r/issues/2"], epic: 12, owner: "em",
 };
 
 function fakeEm(body) {
@@ -37,7 +39,7 @@ test("fileVerifyFollowUpViaEm: asks the EM's file command with the hold's facts 
   assert.deepEqual(JSON.parse(seen.argv[2]), {
     repo: "o/r", card: 7, prNumber: 41, originatedAt: "2026-11-01T00:00:00Z", outcome: "expired",
     reason: "prod-verify-failed", established: [], notEstablished: ["the order never reached the label queue"],
-    evidence: ["log line 1", "log line 2"], epic: 12, owner: "em",
+    evidence: ["https://github.com/o/r/issues/1", "https://github.com/o/r/issues/2"], epic: 12, owner: "em",
   });
 });
 
@@ -82,4 +84,12 @@ test("fileVerifyFollowUpViaEm: a missing EM script is failed, never a throw", as
 
 test("the EM plugin exposes the method on its unstick role", () => {
   assert.equal(new EmPlugin().unstick.fileVerifyFollowUp, fileVerifyFollowUpViaEm);
+});
+
+test("fileVerifyFollowUpViaEm: gh in the EM script gets the EM token as GH_TOKEN, never the Foreman's own", async () => {
+  const log = join(mkTmp("fu-log-"), "env.json");
+  const cfg = fakeEm(`import fs from "node:fs"; fs.writeFileSync(${JSON.stringify(log)}, JSON.stringify({ gh: process.env.GH_TOKEN, github: process.env.GITHUB_TOKEN })); console.log("follow-up filed o/r#3 https://x/3");`);
+  const r = await fileVerifyFollowUpViaEm(repo, cfg, INPUT, logger);
+  assert.equal(r.kind, "filed");
+  assert.deepEqual(JSON.parse(readFileSync(log, "utf8")), { gh: "em-token-fixture", github: "em-token-fixture" });
 });

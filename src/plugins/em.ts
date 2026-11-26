@@ -269,6 +269,9 @@ export async function fileVerifyFollowUpViaEm(
   const em = agentConfig.emRepoPath;
   if (!em) return { kind: "failed", detail: "emRepoPath not configured" };
   const where = `${repoConfig.githubRepo}#${input.card}`;
+  // The EM script shells out to `gh`, which reads only GH_TOKEN / GITHUB_TOKEN: hand it the EM's own token under both.
+  const emToken = process.env.EM_GITHUB_TOKEN;
+  if (!emToken) return { kind: "failed", detail: "EM_GITHUB_TOKEN not set" };
   try {
     const payload = {
       repo: repoConfig.githubRepo, card: input.card, prNumber: input.prNumber, originatedAt: input.originatedAt,
@@ -277,7 +280,7 @@ export async function fileVerifyFollowUpViaEm(
       evidence: input.evidence, epic: input.epic, owner: input.owner,
     };
     const r = await runAgentCli(em, "scripts/routines/verify-disposition.mjs", ["file", "--json", JSON.stringify(payload), "--post"],
-      buildEmEnv(agentConfig), agentConfig, EM_FOLLOW_UP_MAX_DURATION_MS);
+      { ...buildEmEnv(agentConfig), GH_TOKEN: emToken, GITHUB_TOKEN: emToken }, agentConfig, EM_FOLLOW_UP_MAX_DURATION_MS);
     const m = /^follow-up (filed|existing) (\S+)#(\d+) (\S+)$/.exec(r.stdout.trim().split("\n").pop() ?? "");
     if (!r.timedOut && r.code === 0 && m) return { kind: m[1] as "filed" | "existing", issue: Number(m[3]), url: m[4] };
     const detail = `${r.timedOut ? "timed out" : `exit ${r.code}`}: ${cliTail(r)}`;
