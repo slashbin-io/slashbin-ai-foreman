@@ -50,6 +50,7 @@ import { epicChildClosedAlert, type UnstickKind } from "../unstick.js";
 import { verifyHoldPlan } from "./verify.js";
 import { followRelease } from "./promote.js";
 import { epicRefs, handoffSubject } from "../unstick.js";
+import { expireHeldRelease, holdExpiry } from "./verify-expiry.js";
 import { codeHost } from "../plugins/registry.js";
 import { report, resolve as resolveStall, stallClockEnabled, unresolvedStalls, type StallCause } from "../stall-clock.js";
 import { releaseTagName } from "../config-schema/github.js";
@@ -366,8 +367,42 @@ async function passRelease(rt: ForemanRuntime, repoConfig: RepoConfig, rel: Prod
   const mergedAt = Date.parse(rel.mergedAt ?? "") || now();
   await putRelease(rt, repoConfig, {
     ...rel, phase: "soaking", soakAt: iso(mergedAt + SOAK_DELAY_MS),
-    ...(evidence ? { evidence } : {}), retryAt: undefined, hold: undefined,
+    ...(evidence ? { evidence } : {}), retryAt: undefined, hold: undefined, originatedAt: undefined,
   }, logger);
+}
+
+/**
+ * A hold past its maximum age (`backoff.holdMaxAgeMs`, off at 0): file each card's follow-up through the EM plugin, then
+ * close the card as shipped, verification unresolved. A card whose follow-up is not filed stays open and is retried next
+ * pass. Never records `prodVerified`: nothing was verified. A card a person blocked is left alone (`writable`).
+ */
+async function expireHold(rt: ForemanRuntime, repoConfig: RepoConfig, config: AgentConfig, rel: ProdRelease, logger: Logger): Promise<void> {
+  const plugin = roleFor("unstick", config);
+  if (!plugin?.fileVerifyFollowUp) { logger.warn(`Release PR #${rel.pr}: past its maximum hold age, but no plugin files follow-ups; it stays held`); return; }
+  const open = new Set((await codeHost().getOpenIssues(repoConfig.githubRepo, repoConfig.repoPath, logger)).map((i) => i.number));
+  const cards = await writable(repoConfig, rel, logger);
+  const age = formatWait(now() - Date.parse(rel.originatedAt ?? ""));
+  const res = await expireHeldRelease(rel, cards, config.unstickEscalationOwner ?? "", {
+    isOpen: (n) => open.has(n),
+    epicOf: async (n) => {
+      try {
+        const label = repoConfig.epicRefLabel;
+        return label ? (epicRefs(await codeHost().readIssueBody(repoConfig, n), label)[0] ?? null) : null;
+      } catch { return null; }
+    },
+    fileFollowUp: (input) => plugin.fileVerifyFollowUp!(repoConfig, config, input, logger),
+    closeCard: (n) => advance(rt, itemOf(repoConfig, n), "prodExpired", repoConfig, logger),
+    noteClosed: (n, url) => comment(repoConfig, n,
+      `**Shipped, verification unresolved.** Release PR #${rel.pr} reached \`${repoConfig.productionBranch}\`, but production verification stayed held ` +
+      `(\`${rel.hold ?? "no reason recorded"}\`) for ${age}, the maximum. It was never verified. The open question moved to ${url}; this issue is closed.`, logger),
+  }, logger);
+  logger.warn(`Release PR #${rel.pr}: hold expired after ${age}; closed ${res.done.map((n) => `#${n}`).join(", ") || "none"}${res.kept.length ? `, kept ${res.kept.map((n) => `#${n}`).join(", ")}` : ""}`);
+  const kept = rel.issues.filter((n) => !res.done.includes(n));
+  // Cards still open (a filing that failed, a close that did not land, a card a person blocked): wait one window, so
+  // the stages behind this release are not starved by it.
+  if (kept.length > 0) rt.memory.releaseBackoff.start(`${repoConfig.githubRepo}#${rel.pr}`, config.backoff.releaseRetry);
+  if (kept.length === 0) await dropRelease(rt, repoConfig, rel.pr, logger);
+  else if (kept.length < rel.issues.length) await putRelease(rt, repoConfig, { ...rel, issues: kept }, logger);
 }
 
 /**
@@ -431,6 +466,8 @@ async function holdRelease(
   const first = rel.hold !== v.hold || rel.phase !== "held";
   const held: ProdRelease = {
     ...rel, phase: "held", attempts, retryAt, hold: v.hold,
+    // The hold's age starts at the first hold and is kept across every re-hold.
+    originatedAt: rel.originatedAt ?? iso(now()).replace(/\.\d+Z$/, "Z"),
     ...(verifiedHead ? { verifiedHead } : {}),
     ...(v.evidence ? { evidence: v.evidence } : {}),
   };
@@ -1749,6 +1786,19 @@ export async function tryRelease(
     if (!(await putRelease(rt, repoConfig, merged, rlog))) return true;
     await settle(rt, repoConfig, config, merged, await mergedVerdict(rt, repoConfig, config, merged, rlog, cycleNumber), rlog);
     return true;
+  }
+
+  // A production-verification hold past its maximum age expires, whatever its back-off says; an unclocked one is stamped.
+  const maxAge = config.backoff.holdMaxAgeMs;
+  for (const r of current) {
+    if (!ready(r)) continue;
+    const state = holdExpiry(r, now(), maxAge);
+    if (state === "unclocked") {
+      await putRelease(rt, repoConfig, { ...r, originatedAt: iso(now()).replace(/\.\d+Z$/, "Z") }, rlog);
+    } else if (state === "expired") {
+      await expireHold(rt, repoConfig, config, r, rlog);
+      return true;
+    }
   }
 
   const held = current.find((r) => r.phase === "held" && ready(r) && due(r.retryAt));

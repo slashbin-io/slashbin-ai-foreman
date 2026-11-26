@@ -91,10 +91,16 @@ export const backoffConfigSchema = z.object({
   // A release that merged but whose prod verification held or failed. The SRE
   // re-verifies production after one window, longer each time, with no attempt
   // cap: the issue stays open at `prod verification held` until a pass closes
-  // it or a person steps in. A `hold=wait-until-…` time the SRE reports wins
+  // it, a person steps in, or it reaches `holdMaxAgeMs`. A `hold=wait-until-…` time the SRE reports wins
   // when it is later. A new head on the production branch since the last attempt
   // makes the release due now, once per head. Default 10 min rising to 6 h.
   prodVerifyRetry: z.object(win(600_000, 21_600_000, 2)).prefault({}),
+  // The longest a card that SHIPPED may stay held awaiting proof in production (`prod verification held`). Past it the card
+  // closes as "shipped, verification unresolved" and a follow-up card carries the open question (EM plugin
+  // `fileVerifyFollowUp`); a failed filing never closes it. A card that has not shipped (blocked, a dev verify hold,
+  // awaiting sign-off) never expires. 0 is off, the default; the env alias `FOREMAN_HOLD_MAX_AGE` (ms) is read when the
+  // `AI_AGENT_BACKOFF_HOLD_MAX_AGE_MS` name is unset. Production runs 604800000 (7 days).
+  holdMaxAgeMs: z.coerce.number().int().nonnegative().default(0),
   // GitHub's rate limit or the runner's limit (see `runner`) refused work. The
   // whole daemon pauses that upstream; a reset time it reports wins over the window.
   // Default 2 min rising to 1 h. The old top-level `upstreamBackoffBaseMs` /
@@ -219,6 +225,8 @@ export function mergeBackoff(fromFile: unknown, legacyFile: LegacyBackoffKeys = 
     if (isObject(v)) for (const field of Object.keys(v)) set(group, field, process.env[backoffEnvName(group, field)]);
     else set(group, undefined, process.env[backoffEnvName(group)]);
   }
+  // The give-up's own name, FOREMAN_HOLD_MAX_AGE, stands in when the generic one is unset.
+  if (process.env[backoffEnvName("holdMaxAgeMs")] === undefined) set("holdMaxAgeMs", undefined, process.env.FOREMAN_HOLD_MAX_AGE);
   return out;
 }
 

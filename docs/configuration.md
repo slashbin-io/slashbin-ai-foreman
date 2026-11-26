@@ -532,6 +532,7 @@ which only means it retries sooner.
 | `paperclip` | 1 s, 1 s | `maxAttempts` 3 |
 | `registry` | 1 s, 1 s | `maxAttempts` 3 |
 | `predeployStopRecheckMs` | 24 h | — |
+| `holdMaxAgeMs` | off | — |
 | `stuckMergeGraceMs` | 15 min | — |
 | `maxCiBounces` | — | `2` |
 
@@ -637,6 +638,12 @@ A release that merged but whose prod verification held or failed. The SRE re-ver
 | `baseMs` | `600000` (10 min) | `AI_AGENT_BACKOFF_PROD_VERIFY_RETRY_BASE_MS` |
 | `capMs` | `21600000` (6 h) | `AI_AGENT_BACKOFF_PROD_VERIFY_RETRY_CAP_MS` |
 | `factor` | `2` | `AI_AGENT_BACKOFF_PROD_VERIFY_RETRY_FACTOR` |
+
+### `backoff.holdMaxAgeMs`
+
+The longest a card that SHIPPED may stay held awaiting proof in production (`prod verification held`). Past it the card closes as "shipped, verification unresolved" and a follow-up card carries the open question (EM plugin `fileVerifyFollowUp`); a failed filing never closes it. A card that has not shipped (blocked, a dev verify hold, awaiting sign-off) never expires. 0 is off, the default; the env alias `FOREMAN_HOLD_MAX_AGE` (ms) is read when the `AI_AGENT_BACKOFF_HOLD_MAX_AGE_MS` name is unset. Production runs 604800000 (7 days).
+
+Default: `0` · Env: `AI_AGENT_BACKOFF_HOLD_MAX_AGE_MS`
 
 ### `backoff.upstream`
 

@@ -93,6 +93,7 @@ export const MOVES = Object.freeze({
   prodVerified: { from: "releasing", to: "released", why: "The release PR merged (tagged) and the SRE's prod verification passed: commented and closed." },
   prodHeld: { from: "releasing", to: "prodVerifyHeld", why: "The release PR merged (tagged) but prod verification held, failed or did not run: labelled, reopened if GitHub's keywords closed it, re-verified on a back-off." },
   prodReverified: { from: "prodVerifyHeld", to: "released", why: "A later prod re-verification passed: commented and closed." },
+  prodExpired: { from: "prodVerifyHeld", to: "released", why: "Shipped, but its prod verification stayed held past the maximum hold age: a follow-up card carries the open question and this one is closed as shipped, verification unresolved (never recorded as verified)." },
   soakHeld: { from: "released", to: "prodVerifyHeld", why: "Closed after prod verification, but the SRE's 30-minute soak held or failed: reopened, labelled, re-verified on a back-off." },
 } as const satisfies Record<string, { from: PriorState; to: WorkState; why: string }>);
 export type Move = keyof typeof MOVES;

@@ -95,6 +95,7 @@ const LABEL_WRITE: Readonly<Record<Move, LabelWrite>> = Object.freeze({
   prodVerified: async (c, cfg, n, log) => await c.closeReleased(cfg, n, log),
   prodHeld: async (c, cfg, n, log) => await c.prodHeld(cfg, n, log),
   prodReverified: async (c, cfg, n, log) => await c.closeReleased(cfg, n, log),
+  prodExpired: async (c, cfg, n, log) => await c.closeReleased(cfg, n, log),
   soakHeld: async (c, cfg, n, log) => await c.prodHeld(cfg, n, log),
 });
 

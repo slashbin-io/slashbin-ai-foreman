@@ -90,6 +90,7 @@ Every state change the Foreman makes. *From* is the state the caller knows the i
 | `prodVerified` | releasing | released | `done` | The release PR merged (tagged) and the SRE's prod verification passed: commented and closed. |
 | `prodHeld` | releasing | prodVerifyHeld | `prodVerifyHeld` | The release PR merged (tagged) but prod verification held, failed or did not run: labelled, reopened if GitHub's keywords closed it, re-verified on a back-off. |
 | `prodReverified` | prodVerifyHeld | released | `done` | A later prod re-verification passed: commented and closed. |
+| `prodExpired` | prodVerifyHeld | released | `done` | Shipped, but its prod verification stayed held past the maximum hold age: a follow-up card carries the open question and this one is closed as shipped, verification unresolved (never recorded as verified). |
 | `soakHeld` | released | prodVerifyHeld | `prodVerifyHeld` | Closed after prod verification, but the SRE's 30-minute soak held or failed: reopened, labelled, re-verified on a back-off. |
 
 ```mermaid
@@ -117,6 +118,7 @@ stateDiagram-v2
   releasing --> released: prodVerified
   releasing --> prodVerifyHeld: prodHeld
   prodVerifyHeld --> released: prodReverified
+  prodVerifyHeld --> released: prodExpired
   released --> prodVerifyHeld: soakHeld
 ```
 
