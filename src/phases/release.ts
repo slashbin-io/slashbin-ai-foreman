@@ -512,8 +512,10 @@ export const DEPLOY_STOPS: Readonly<Record<string, string>> = {
 
 /** The longest a time hold is waited for before the release is asked about again: a far `eligible_at` is re-checked daily. */
 export const MAX_TIME_HOLD_MS = 24 * 3_600_000;
-/** How long after a release deployed its deferred check may still run: the follow-up's endpoint is the deploy time plus this (EM epic #2985). */
+/** The floor of a follow-up's observation window: its endpoint is never earlier than the deploy time plus this (EM epic #2985). */
 export const FOLLOW_UP_WINDOW_MS = 7 * 86_400_000;
+/** The follow-up's endpoint is also never earlier than its first run plus this, so a far check is never refused. */
+export const FOLLOW_UP_AFTER_RUN_MS = 86_400_000;
 
 /**
  * What an unmerged deploy's hold means (agent contract v1). The deployer's own
@@ -1189,9 +1191,9 @@ async function announceWait(
  * closes on everything observable now (owner, 2026-11-15: security_tests#407/#412/#429/#436 sat live in production for
  * up to 19 days waiting on a monthly cron). The EM books the follow-up, which re-runs the SRE's prod verification at
  * that time; a failure or an inconclusive run files a follow-up card, and the closed issues stay closed. The booking
- * carries the release's origin (when it deployed), a finite endpoint (the origin plus `FOLLOW_UP_WINDOW_MS`) and the
+ * carries the release's origin (when it deployed), a finite endpoint (the later of the origin plus `FOLLOW_UP_WINDOW_MS` and the first run plus a day) and the
  * epic, so a re-arm can never push the check past the window. False, and the release waits as before, when the time is
- * within 24 hours, at or past the endpoint, or nothing was booked: a card is never closed on a check nobody will run.
+ * within 24 hours or nothing was booked: a card is never closed on a check nobody will run.
  */
 async function deferToFollowUp(
   rt: ForemanRuntime, repoConfig: RepoConfig, config: AgentConfig, rel: ProdRelease, v: Extract<Verdict, { kind: "wait" }>, logger: Logger,
@@ -1200,11 +1202,9 @@ async function deferToFollowUp(
   if (!Number.isFinite(at) || at - now() <= MAX_TIME_HOLD_MS) return false;
   const originMs = Date.parse(rel.mergedAt ?? rel.since);
   const originatedAt = iso(Number.isFinite(originMs) ? originMs : now()).replace(/\.\d+Z$/, "Z");
-  const endpoint = iso(Date.parse(originatedAt) + FOLLOW_UP_WINDOW_MS).replace(/\.\d+Z$/, "Z");
-  if (at >= Date.parse(endpoint)) {
-    logger.warn(`Release PR #${rel.pr}: its check at ${v.retryAt} is at or past the follow-up endpoint ${endpoint} (deployed ${originatedAt}); waiting on the card instead`);
-    return false;
-  }
+  // Never hold the card for a deferred check (EM ruling, #2985): the endpoint is the later of the 7-day observation floor
+  // and a day after the first run, so a check due 19 days out still books and the card closes at deploy.
+  const endpoint = iso(Math.max(Date.parse(originatedAt) + FOLLOW_UP_WINDOW_MS, at + FOLLOW_UP_AFTER_RUN_MS)).replace(/\.\d+Z$/, "Z");
   let epic: number | null = null;
   const label = repoConfig.epicRefLabel;
   if (label) {
