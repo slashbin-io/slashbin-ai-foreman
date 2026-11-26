@@ -287,7 +287,7 @@ We built Foreman to carry implementation work across the repos behind
 review feedback back to the builder, and following changes past the first PR.
 Foreman puts those handoffs into a loop with a visible record.
 
-[Slashbin AI Team](https://github.com/acme/team-bot) and Foreman serve
+[Slashbin AI Team](https://github.com/slashbin-io/slashbin-ai-team) and Foreman serve
 different parts of that workflow. AI Team gives agents roles, context, tools, and
 ways to receive work through Paperclip, Discord, or both. Foreman runs the GitHub
 implementation pipeline. You can use Foreman without the AI Team harness or a
