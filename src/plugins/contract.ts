@@ -273,6 +273,8 @@ export interface VerifyFollowUpInput {
   epic: number | null;
   /** Who owns the follow-up. */
   owner: string;
+  /** Why it is filed: `expired` (the default, a hold past its maximum age) or `failed` (an EM-owned step is owed now). */
+  outcome?: "expired" | "failed";
 }
 
 export type VerifyFollowUpOutcome =
