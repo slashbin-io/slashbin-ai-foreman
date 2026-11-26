@@ -2394,7 +2394,9 @@ test("a stored merged release already waiting under 24 hours is announced once, 
 
 // Owner, 2026-11-15: a check observable only after the next 24 hours is a scheduled Paperclip follow-up, not an open
 // card; the card closes on everything observable now. security_tests#407/#412/#429/#436 sat live for up to 19 days.
-const farAway = () => new Date(Math.ceil((Date.now() + 16 * 86_400_000) / 60_000) * 60_000).toISOString();
+// 3 days: past the 24 h threshold, inside the follow-up's 7-day endpoint (deploy time + 7 days).
+const farAway = (days = 3) => new Date(Math.ceil((Date.now() + days * 86_400_000) / 60_000) * 60_000).toISOString();
+const wholeSeconds = (ms) => new Date(ms).toISOString().replace(/\.\d+Z$/, "Z");
 const closeNotes = (n) => commentsOn(n).filter((b) => /scheduled follow-up/.test(b));
 
 test("a time wait past 24 hours books the EM's follow-up, then closes the issues with it named", async () => {
@@ -2403,17 +2405,42 @@ test("a time wait past 24 hours books the EM's follow-up, then closes the issues
   assert.equal(await run(), true);
   const booked = agentCalls().filter((c) => c[0] === "em");
   assert.equal(booked.length, 1, "one follow-up booked");
-  assert.deepEqual(booked[0].slice(1), ["schedule", "--repo", REPO, "--pr", "100", "--issues", "5,6", "--at", far]);
+  const rel0 = (await prodReleases())[100];
+  const originatedAt = wholeSeconds(Date.parse(rel0.mergedAt));
+  assert.deepEqual(booked[0].slice(1), ["schedule", "--repo", REPO, "--pr", "100", "--issues", "5,6", "--at", far,
+    "--originated-at", originatedAt, "--endpoint", wholeSeconds(Date.parse(originatedAt) + 7 * 86_400_000)], "origin and endpoint, no epic");
   for (const n of [5, 6]) {
     assert.equal(gh().issues[n].state, "CLOSED", `#${n} closes`);
     assert.equal(waitNotes(n).length, 0, `#${n} is not told to wait`);
     assert.equal(closeNotes(n).length, 1, `#${n} names the follow-up once`);
     assert.match(closeNotes(n)[0], /routine R1/);
-    assert.match(closeNotes(n)[0], /reopens this issue if it fails/);
+    assert.match(closeNotes(n)[0], /a follow-up card is filed and this issue stays closed/);
+    assert.doesNotMatch(closeNotes(n)[0], /reopen/);
   }
   const rel = (await prodReleases())[100];
   assert.equal(rel?.phase, "soaking", "the release goes on to its soak");
   assert.equal(rel.retryAt, undefined);
+});
+
+test("a time wait past 24 hours passes the epic the issues belong to", async () => {
+  const far = farAway();
+  world(pending(), { approve: { exit: 0 }, deploy: TIME_WAIT(far), prod: V1({ outcome: "hold", hold: "wait-until", eligible_at: far }) });
+  setBodies({ 6: "## References\n- engineering-manager #880" });
+  assert.equal(await run(), true);
+  const booked = agentCalls().filter((c) => c[0] === "em");
+  assert.equal(booked.length, 1);
+  assert.equal(booked[0][booked[0].indexOf("--epic") + 1], "880", "the first issue that names an epic gives it");
+});
+
+test("a time wait at or past the endpoint (deploy + 7 days) books nothing and keeps the card open and waiting", async () => {
+  const far = farAway(10);
+  world(pending(), { approve: { exit: 0 }, deploy: TIME_WAIT(far), prod: V1({ outcome: "hold", hold: "wait-until", eligible_at: far }) });
+  assert.equal(await run(), true);
+  assert.equal(agentCalls().filter((c) => c[0] === "em").length, 0, "no booking the routine would refuse");
+  for (const n of [5, 6]) {
+    assert.equal(gh().issues[n].state, "OPEN", `#${n} stays open`);
+    assert.equal(waitNotes(n).length, 1, `#${n} hears the wait`);
+  }
 });
 
 test("a time wait past 24 hours that cannot be booked keeps the card open and waiting, never closed unchecked", async () => {
@@ -2434,7 +2461,7 @@ test("a stored release already waiting past 24 hours is closed onto a follow-up 
   await seedRelease(rt, repo, { pr: 100, headSha: HEAD, issues: [5], phase: "merged", mergeSha: MERGE, mergedAt: t0, attempts: 0, since: t0, retryAt: far, waitNoted: far });
   await run();
   assert.equal(agentCalls().filter((c) => c[1] === "verify").length, 0, "nothing is verified");
-  assert.deepEqual(agentCalls().filter((c) => c[0] === "em").map((c) => c.at(-1)), [far], "booked at the SRE's time");
+  assert.deepEqual(agentCalls().filter((c) => c[0] === "em").map((c) => c[c.indexOf("--at") + 1]), [far], "booked at the SRE's time");
   assert.equal(gh().issues[5].state, "CLOSED");
   assert.ok(closeNotes(5)[0].includes(`${far.slice(0, 16).replace("T", " ")} UTC`), closeNotes(5)[0]);
   assert.equal((await prodReleases())[100]?.phase, "soaking");
