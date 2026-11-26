@@ -13,23 +13,33 @@
 //     home's path so the CLI finds its home where it expects it. The host home itself is absent. The one
 //     thing carried in is the CLI's sign-in, `~/.claude/.credentials.json`, read-only;
 //   - the agent binary and the Node install, read-only;
-//   - `cwd` and `write`, writable; `read`, read-only.
+//   - `cwd` and `write`, writable, with a linked worktree's git folders (`worktreeGitDirs`); `read`, read-only,
+//     even where it lies inside a writable folder;
+//   - never another session's scratch home: the folder they live in is masked wherever a bind exposes it.
 // The network is shared: a session must reach the model, GitHub and its MCP servers.
 //
 // Ported from slashbin-ai-team `lib/confine.js` (PR #147). That repo is private and this one is public, so
 // the argument construction is copied, never imported. This file is the one copy of fence logic here.
 //
-// Nothing starts a session through this yet: the spawn wiring is the sibling card. Until then
-// `confineSessions: true` only refuses a start on a host that cannot run a sandbox.
+// With `confineSessions` on, every builder session starts through `confineCommand` (src/session/runner.ts).
+// The host home is gone, so git there has no SSH key, no agent and no `~/.gitconfig`: `writeSessionGitConfig`
+// gives the scratch home the host's commit identity, rewrites GitHub SSH remotes to HTTPS and answers the
+// HTTPS credential prompt with the session's own GH_TOKEN, so a push needs nothing from the host.
 
-import { spawn } from "node:child_process";
-import { existsSync, lstatSync, mkdirSync, mkdtempSync, readlinkSync, realpathSync, rmSync, statSync } from "node:fs";
+import { execFile, spawn } from "node:child_process";
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readlinkSync, realpathSync, rmSync, statSync } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, join, resolve, sep } from "node:path";
+import { basename, dirname, isAbsolute, join, resolve, sep } from "node:path";
+import { promisify } from "node:util";
 import { stateDir } from "../state-dir.js";
+
+const execFileAsync = promisify(execFile);
 
 /** The folders a fenced session reads system files from, as the host lays them out. */
 const CONFINE_SYSTEM = ["/usr", "/etc", "/bin", "/sbin", "/lib", "/lib32", "/lib64", "/libx32"];
+
+/** The largest git pointer file (`.git`, `commondir`, `gitdir`) read; real ones hold one path. */
+const POINTER_MAX = 4096;
 
 /** How long the start probe may take before the sandbox counts as unable to start. */
 const PROBE_TIMEOUT_MS = 10_000;
@@ -81,7 +91,8 @@ function which(bin: string): string | null {
 
 /**
  * The bubblewrap command that starts `bin args` fenced. Throws when `home` is not a plain folder (missing,
- * a file, or a link): a session that could point its home elsewhere would be handed that place, writable.
+ * a file, or a link): a session that could point its home elsewhere would be handed that place, writable. Also
+ * throws when `cwd/.git` is a gitdir file that fails `worktreeGitDirs`' check.
  */
 export function confineCommand(bin: string, args: string[], opts: ConfineOptions): { bin: string; args: string[] } {
   const { cwd, home, read = [], write = [], bwrap = "bwrap" } = opts;
@@ -129,17 +140,93 @@ export function confineCommand(bin: string, args: string[], opts: ConfineOptions
   ro.add(dirname(dirname(real(process.execPath))));
   for (const p of read) ro.add(real(p));
 
-  const rw = new Set([real(cwd), ...write.map(real)]);
-  // A read-only path inside a writable one is already visible; shallower paths bind first so a deeper
-  // writable one lands on top.
+  const rw = new Set([real(cwd), ...worktreeGitDirs(cwd, hostHome), ...write.map(real)]);
+  // Shallower paths bind first so a deeper one lands on top. A read-only path inside a writable one is bound
+  // again after it, so it stays read-only rather than inheriting the writable bind.
   const depth = (p: string) => p.split(sep).length;
-  const roList = [...ro].filter((p) => existsSync(p) && ![...rw].some((w) => within(p, w)));
+  const byDepth = (a: string, b: string) => depth(a) - depth(b);
+  const insideRw = (p: string) => [...rw].some((w) => within(p, w));
+  const roAll = [...ro].filter((p) => existsSync(p));
   const rwList = [...rw].filter((p) => existsSync(p));
-  for (const p of roList.sort((a, b) => depth(a) - depth(b))) out.push("--ro-bind", p, p);
-  for (const p of rwList.sort((a, b) => depth(a) - depth(b))) out.push("--bind", p, p);
+  for (const p of roAll.filter((p) => !insideRw(p)).sort(byDepth)) out.push("--ro-bind", p, p);
+  for (const p of rwList.sort(byDepth)) out.push("--bind", p, p);
+
+  // Every scratch home lives in one folder, under the state directory, which can sit inside a bound checkout
+  // (the Foreman managing itself, with the default state directory `.`). Masked there, a session cannot
+  // read, change or delete another's home; its own stays reachable at the host home's path.
+  const homes = real(sessionHomesDir());
+  if ([...roAll, ...rwList].some((p) => within(homes, p)) && existsSync(homes)) out.push("--tmpfs", homes);
+
+  for (const p of roAll.filter(insideRw).sort(byDepth)) out.push("--ro-bind", p, p);
 
   out.push("--chdir", real(cwd), "--", binPath ?? bin, ...args);
   return { bin: bwrap, args: out };
+}
+
+/**
+ * The git folders a linked worktree at `cwd` needs besides itself: its `.git` is a file naming a gitdir
+ * (`<common>/worktrees/<name>`) outside the checkout, and that gitdir's `commondir` names the shared one with
+ * the objects and refs. Both are bound writable; no other checkout's working files are. [] for a plain checkout.
+ *
+ * Both pointers are files a session can rewrite, so neither is trusted alone: a gitdir is accepted only when it
+ * is `<common>/worktrees/<name>` inside a folder laid out as a git dir, its `commondir` resolves to that same
+ * `<common>`, and its own `gitdir` file points back at this checkout's `.git`. Pointing them at a folder the
+ * session cannot already write (the host home, say) cannot pass, because the back-pointer would have to be
+ * written there first. The shape is checked before any file outside the checkout is read, and a pointer file is
+ * read only when it is a small regular file, never through a link. A `.git` file that fails throws a fixed
+ * message naming no path or content it read: the session is refused, never started with the pointer dropped or
+ * followed.
+ */
+export function worktreeGitDirs(cwd: string, hostHome: string = homedir()): string[] {
+  const root = real(cwd);
+  const dotGit = join(root, ".git");
+  let st;
+  try {
+    st = lstatSync(dotGit);
+  } catch {
+    return [];
+  }
+  if (st.isDirectory()) return [];
+  const refuse = (why: string): never => {
+    throw new Error(`Confined session refused: the checkout's .git ${why}`);
+  };
+  /** A pointer file's text: a regular file (not a link) of at most POINTER_MAX bytes, else null. */
+  const pointer = (file: string): string | null => {
+    try {
+      const f = lstatSync(file);
+      if (!f.isFile() || f.size > POINTER_MAX) return null;
+      return readFileSync(file, "utf-8").trim();
+    } catch {
+      return null;
+    }
+  };
+  const isDir = (p: string) => {
+    try {
+      return statSync(p).isDirectory();
+    } catch {
+      return false;
+    }
+  };
+  const dotGitText = pointer(dotGit) ?? refuse("is neither a folder nor a gitdir file");
+  const m = dotGitText.match(/^gitdir:\s*(.+)$/m) ?? refuse("names no gitdir");
+  const gitDir = real(resolve(root, m[1].trim()));
+  const common = dirname(dirname(gitDir));
+  const shaped =
+    basename(dirname(gitDir)) === "worktrees" &&
+    isDir(gitDir) &&
+    isDir(join(common, "objects")) &&
+    isDir(join(common, "refs")) &&
+    pointer(join(common, "HEAD")) !== null;
+  if (!shaped) refuse("names a folder that is not a linked worktree's git dir");
+  const commonRaw = pointer(join(gitDir, "commondir")) ?? refuse("names a git dir without a readable commondir");
+  if (real(isAbsolute(commonRaw) ? commonRaw : resolve(gitDir, commonRaw)) !== common) {
+    refuse("names a git dir whose commondir does not hold it");
+  }
+  const back = pointer(join(gitDir, "gitdir")) ?? refuse("names a git dir without a readable back-pointer");
+  if (real(resolve(gitDir, back)) !== dotGit) refuse("names a git dir that belongs to another checkout");
+  const home = real(hostHome);
+  if ([gitDir, common].some((d) => within(home, d))) refuse("names a git dir that would cover the home");
+  return [gitDir, common].filter((d) => !within(d, root));
 }
 
 /** Why a fenced session cannot start on this host, or [] when it can: bubblewrap must start a sandbox. */
@@ -174,6 +261,40 @@ export async function createSessionHome(): Promise<string> {
   const dir = sessionHomesDir();
   mkdirSync(dir, { recursive: true, mode: 0o700 });
   return mkdtempSync(join(dir, "s-"));
+}
+
+/**
+ * The git credential helper a fenced session uses for https://github.com: the session's GH_TOKEN, read when git
+ * asks, so the token is never written to disk. `store` and `erase` are ignored.
+ */
+export const SESSION_GIT_CREDENTIAL_HELPER =
+  '!f() { test "$1" = get || exit 0; echo username=x-access-token; echo "password=$GH_TOKEN"; }; f';
+
+/** The GitHub SSH remote forms a fenced session's git rewrites to HTTPS: it has no SSH key or agent. */
+export const SESSION_GIT_SSH_FORMS = ["git@github.com:", "ssh://git@github.com/"];
+
+/**
+ * Write `<home>/.gitconfig` for a fenced session: the host's global commit identity (`user.name`, `user.email`,
+ * when set), every GitHub SSH remote rewritten to HTTPS, and the GH_TOKEN credential helper as the only one for
+ * https://github.com (the empty first value resets any the system config names). Nothing else of the host's
+ * git config crosses.
+ */
+export async function writeSessionGitConfig(home: string, env: NodeJS.ProcessEnv = process.env): Promise<void> {
+  const file = join(home, ".gitconfig");
+  const set = (key: string, value: string, add = false) =>
+    execFileAsync("git", ["config", "--file", file, ...(add ? ["--add"] : []), key, value], { env });
+  for (const key of ["user.name", "user.email"]) {
+    let value = "";
+    try {
+      value = (await execFileAsync("git", ["config", "--global", "--get", key], { env })).stdout.trim();
+    } catch {
+      /* unset on the host: git asks for it inside, as it would outside */
+    }
+    if (value) await set(key, value);
+  }
+  for (const [i, form] of SESSION_GIT_SSH_FORMS.entries()) await set("url.https://github.com/.insteadOf", form, i > 0);
+  await set("credential.https://github.com.helper", "");
+  await set("credential.https://github.com.helper", SESSION_GIT_CREDENTIAL_HELPER, true);
 }
 
 /** Remove a session's scratch home. A missing one is a no-op. */
