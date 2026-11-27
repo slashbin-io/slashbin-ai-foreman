@@ -2737,6 +2737,48 @@ test("predeploy-stop: a person's blocked is never retried", async () => {
   assert.ok(gh().issues[5].labels.includes("blocked") && gh().issues[6].labels.includes("blocked"), "nothing was lifted");
 });
 
+// --- A person lifting one issue the stop names releases the whole stop (#347) -------------------------------------------
+// A release sat 11 hours: the EM lifted two of its three issues and the Foreman waited on the third.
+
+const stopWorld3 = (listD = false) => world({
+  issues: [issue(5, "release pending"), issue(6, "release pending"), issue(7, "release pending")],
+  prs: [releasePr(100, "## Production Promotion\n\n### Issues included\n- #5: Issue 5\n- #6: Issue 6\n- #7: Issue 7" + (listD ? "\n- #8: Issue 8" : ""))],
+  compareFiles: 3, comments: { 100: [PV_COMMENT(1, "registry row x not validated")] },
+}, { approve: [{ exit: 0 }, { exit: 0 }], deploy: [STOP(1), DEPLOYED("pass", " evidence=https://example.test/pv")] });
+const FOREMAN_LABELS3 = { ...FOREMAN_LABELS, 7: [{ label: "blocked", by: "foreman-bot" }] };
+/** A person removes `blocked` from issue `n` (the issue's label list is what the next pass reads). */
+const unblock = (n) => { const st = gh(); st.issues[n].labels = st.issues[n].labels.filter((l) => l !== "blocked"); writeFileSync(GH_STATE, JSON.stringify(st)); };
+
+test("predeploy-stop: removing blocked from one named issue releases the stop on the next pass (#347)", async () => {
+  stopWorld3();
+  assert.equal(await run(), true);
+  for (const n of [5, 6, 7]) assert.ok(gh().issues[n].labels.includes("blocked"), `#${n} blocked by the stop`);
+  withEvents(FOREMAN_LABELS3);
+  rt = withFreshMemory(rt);
+  assert.equal(await run(2), false, "all three blocked, not due: only the timed recheck");
+  assert.equal(agentCalls().length, 2);
+  unblock(5);
+  rt = withFreshMemory(rt);
+  assert.equal(await run(3), true, "A alone was released: the stop is asked again at once");
+  assert.equal(agentCalls().length, 4, "the SRE pre-deploy run was requested");
+  const snap = labelsAtDeploy()[1];
+  assert.ok(!snap[6].includes("blocked") && !snap[7].includes("blocked"), "B and C were unblocked for the run");
+  assert.ok(gh().refs.length > 0, "and it merged");
+});
+
+test("predeploy-stop: a blocked outside the record is never lifted, and holds the release (#347)", async () => {
+  stopWorld3(true);
+  await run();
+  const st = gh(); st.issues[8] = issue(8, "blocked"); writeFileSync(GH_STATE, JSON.stringify(st));
+  withEvents({ ...FOREMAN_LABELS3, 8: [{ label: "blocked", by: "a-person" }] });
+  unblock(5);
+  rt = withFreshMemory(rt);
+  assert.equal(await run(2), false, "D is not in the record");
+  assert.equal(agentCalls().length, 2);
+  assert.ok(gh().issues[8].labels.includes("blocked"), "D is untouched");
+  assert.ok(gh().issues[6].labels.includes("blocked") && gh().issues[7].labels.includes("blocked"), "nothing else was lifted");
+});
+
 test("the other stops are never retried", async () => {
   for (const hold of ["merge-refused-repeatedly", "merge-blocked-check"]) {
     world(pending(), { approve: { exit: 0 }, deploy: { exit: 0, out: `SRE_DEPLOY pr=#100 merged=no merge_sha=none verify=none hold=${hold}` } });

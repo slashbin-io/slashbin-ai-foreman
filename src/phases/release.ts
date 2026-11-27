@@ -624,11 +624,16 @@ async function stopRelease(
  * ever applied by anyone but the Foreman, and `backoff.predeployStopRecheckMs` has passed since the last
  * STOP. Returns the record, or null: left blocked.
  */
-async function predeployRecheck(rt: ForemanRuntime, repoConfig: RepoConfig, config: AgentConfig, pr: number, rec: PredeployStop | undefined, blocked: number[], logger: Logger): Promise<PredeployStop | null> {
+async function predeployRecheck(rt: ForemanRuntime, repoConfig: RepoConfig, config: AgentConfig, pr: number, rec: PredeployStop | undefined, blocked: number[], open: number[], logger: Logger): Promise<PredeployStop | null> {
   if (!rec) return null;
-  if (!(now() >= Date.parse(rec.at) + config.backoff.predeployStopRecheckMs)) return null;
   // Linear: the recorded issues once, then each blocked issue against them.
   const recorded = new Set(rec.issues);
+  // A person who removes `blocked` from one issue the stop names releases the whole stop: the rest are lifted and the SRE
+  // asked on this pass, not when the timer runs out. WHY (#347): a release sat 11 hours after the EM
+  // lifted two of its three issues. Only issues in the record are lifted; a `blocked` outside it holds the release below.
+  const blockedNow = new Set(blocked);
+  const released = open.some((n) => recorded.has(n) && !blockedNow.has(n));
+  if (!released && !(now() >= Date.parse(rec.at) + config.backoff.predeployStopRecheckMs)) return null;
   if (blocked.some((n) => !recorded.has(n))) return null;
   for (const n of blocked) {
     const key = `${repoConfig.githubRepo}#${pr}#${n}`;
@@ -1527,7 +1532,7 @@ async function deploy(rt: ForemanRuntime, repoConfig: RepoConfig, config: AgentC
   const stopped = issues.filter((i) => codeHost().hasLabel(i, repoConfig.github.blockedLabel)).map((i) => i.number);
   // A `predeploy-stop` the Foreman recorded is asked about again once its interval has passed (the SRE's pre-deploy
   // check only reads); every other `blocked` is a person's, or a stop that needs one, and holds the release.
-  const recheck = stopped.length > 0 ? await predeployRecheck(rt, repoConfig, config, open.number, own.predeployStop, stopped, logger) : null;
+  const recheck = stopped.length > 0 ? await predeployRecheck(rt, repoConfig, config, open.number, own.predeployStop, stopped, issues.map((i) => i.number), logger) : null;
   if (stopped.length === 0 || !recheck) await trackHold(rt, repoConfig, "release-blocked-label", stopped, open.number, gate.loaded.records, logger);
   if (stopped.length > 0 && !recheck) {
     logger.debug(`Release PR #${open.number}: ${stopped.map((n) => `#${n}`).join(", ")} blocked; not deploying`);
