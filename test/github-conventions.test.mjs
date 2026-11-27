@@ -85,6 +85,15 @@ test("issueStage: release pending + blocked is releaseParked; the label alone, o
   assert.equal(issueStage(["release pending"], false, R, "approved"), "releasing", "restored to where it was, with no grant added");
 });
 
+test("issueStage: a repo held out of production parks what waits on the EM's grant, and only that; lifting it returns the stage", () => {
+  const R = { ...L, releasePending: "release pending", prodVerifyHeld: "prod verification held" };
+  assert.equal(issueStage(["pr approved"], false, R, "approved", "blocked", false, true), "releaseParked");
+  assert.equal(issueStage(["approved"], true, R, "approved", "blocked", false, true), "releaseParked");
+  assert.equal(issueStage(["pr approved"], false, R, "approved", "blocked", false, false), "pendingVerification");
+  assert.equal(issueStage(["pr merged"], false, R, "approved", "blocked", false, true), "merged", "dev verification is not held");
+  assert.equal(issueStage(["approved"], false, R, "approved", "blocked", false, true), "approved", "building is not held");
+});
+
 test("issueStage: a custom blocked label holds the issue; the default word no longer does", () => {
   assert.equal(issueStage(["pr merged", "on hold"], false, L, "approved", "on hold"), "blocked");
   assert.notEqual(issueStage(["pr merged", "blocked"], false, L, "approved", "on hold"), "blocked");

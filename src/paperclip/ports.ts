@@ -62,6 +62,7 @@ export interface PlacementPort {
   holdOutranks(id: string, stage: PaperclipStage): boolean;
   rulingPending(id: string, stage: PaperclipStage): boolean;
   holderMatches(id: string, stage: PaperclipStage | "done"): boolean;
+  stageLabelMatches(id: string, stage: PaperclipStage | "done"): Promise<boolean>;
   placeHeld(id: string): Promise<void>;
   move(id: string, to: PaperclipStepMove, held?: boolean, liveOpen?: boolean): Promise<boolean>;
   retryDeferredMoves(): Promise<void>;

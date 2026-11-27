@@ -47,6 +47,20 @@ export function issueStage(
   triggerLabel: string,
   blockedLabel: string = SOURCE_BLOCKED_LABEL,
   signoffHeld = false,
+  prodHeld = false,
+): StageOrDone | null {
+  const stage = labelStage(labels, inRelease, lifecycle, triggerLabel, blockedLabel, signoffHeld);
+  // A repo held out of production: what waits on the EM's grant is parked, the same stage and the same rule as a stopped release.
+  return prodHeld && (stage === "pendingVerification" || stage === "awaitingRelease") ? "releaseParked" : stage;
+}
+
+function labelStage(
+  labels: readonly string[],
+  inRelease: boolean,
+  lifecycle: LifecycleLabels,
+  triggerLabel: string,
+  blockedLabel: string,
+  signoffHeld: boolean,
 ): StageOrDone | null {
   const has = (l: string) => labels.includes(l);
   // A stop on a release the Foreman owns: parked, not Blocked. A deployed card (`prod verification held`) is a hold, not a park.
@@ -230,7 +244,7 @@ export class GitHubIssueConnector implements WorkSourceAdapter {
       open.filter((i) => labelsOf(i).includes(blockedLabel)).map((i) => i.number), logger);
     const out: SnapshotCard[] = open.map((i) => {
       const hold = holds.get(i.number);
-      const stage = issueStage(labelsOf(i), release.has(i.number), repoConfig.lifecycleLabels, repoConfig.triggerLabel, blockedLabel, signoff !== null);
+      const stage = issueStage(labelsOf(i), release.has(i.number), repoConfig.lifecycleLabels, repoConfig.triggerLabel, blockedLabel, signoff !== null, repoConfig.github.prodHold !== null);
       return {
         item: { issueNumber: i.number, repo },
         title: i.title,
@@ -285,7 +299,7 @@ export class GitHubIssueConnector implements WorkSourceAdapter {
     const release = await this.releaseIssues(repoConfig, logger);
     const signoff = await this.signoffHeld(repoConfig, issues.some((i) => i.labels.includes(repoConfig.lifecycleLabels.releasePending)), logger);
     for (const { number, labels } of issues) {
-      const stage = issueStage(labels, release.has(number), repoConfig.lifecycleLabels, repoConfig.triggerLabel, repoConfig.github.blockedLabel, signoff !== null);
+      const stage = issueStage(labels, release.has(number), repoConfig.lifecycleLabels, repoConfig.triggerLabel, repoConfig.github.blockedLabel, signoff !== null, repoConfig.github.prodHold !== null);
       if (stage === null) continue;
       out.push({ item: { issueNumber: number, repo: repoConfig.githubRepo }, stage, detail: labels.join(", ") || "none", ...(stage === "awaitingSignoff" && signoff ? { signoff } : {}) });
     }

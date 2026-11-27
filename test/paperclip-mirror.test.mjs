@@ -746,6 +746,20 @@ test("snapshot: a block GitHub's blocked label made is released when the label g
   assert.equal(fake.rows[0].status, "todo", "the label is gone: back to the queue");
 });
 
+test("snapshot: an existing Blocked card of a release-held issue takes the Release parked label once, keeps it, and returns to Releasing when the stop lifts (Foreman #420)", async () => {
+  const fake = fakePaperclip([row7("blocked", { unblockDescriptor: { action: "blocked: needs attention" } })]);
+  const { mirror } = mirrorOn(fake);
+  const held = [{ number: 7, labels: ["release pending", "blocked"] }];
+  await onSnap(mirror, "example/r", snap(held), logger());
+  assert.deepEqual(labelName(fake, fake.rows[0]), ["Release parked"], "the first snapshot labels it");
+  await onSnap(mirror, "example/r", snap(held), logger());
+  assert.deepEqual(labelName(fake, fake.rows[0]), ["Release parked"], "the second keeps it");
+  assert.equal(fake.rows[0].status, "blocked");
+  await onSnap(mirror, "example/r", snap([{ number: 7, labels: ["release pending"] }]), logger());
+  assert.notEqual(fake.rows[0].status, "blocked", "the stop lifted: back to the release stage");
+  assert.ok(!labelName(fake, fake.rows[0]).includes("Release parked"));
+});
+
 test("snapshot: after a restart, a label-made block (its last note the sync note) is released; a Foreman block is kept", async () => {
   const fake = fakePaperclip([
     row7("blocked", { unblockDescriptor: { action: "blocked: needs attention" } }),

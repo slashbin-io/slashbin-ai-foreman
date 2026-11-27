@@ -120,7 +120,7 @@ export class SnapshotSync {
       }
       const want = `status:${this.env.statusName(stage === "done" ? "done" : stageTarget(this.env.cfg, stage).bucket)}`;
       // The holder counts as much as the column: a lost hand-off leaves the status right and the seat wrong (Foreman #100).
-      if (state === want && this.placement.holderMatches(id, stage)) continue;
+      if (state === want && this.placement.holderMatches(id, stage) && (await this.placement.stageLabelMatches(id, stage))) continue;
       // A Foreman block is released by GitHub moving on, not by another writer:
       // the stage owner's own wake checks the card out to in_progress, and
       // matching that to GitHub took SLA-1335 out of the EM's hands (2026-10-14).
@@ -183,7 +183,7 @@ export class SnapshotSync {
       if (nowState.startsWith("waiting\n")) continue;
       // Only a hold new since the scan: one the cache showed was weighed above, and GitHub moving on released it.
       if (state !== blocked && this.placement.externalHold(id) && (await this.placement.holdStandsAt(id, stage))) continue;
-      if (nowState === want && this.placement.holderMatches(id, stage)) continue;
+      if (nowState === want && this.placement.holderMatches(id, stage) && (await this.placement.stageLabelMatches(id, stage))) continue;
       // Read open live: a card closed for it before is the issue reopened.
       if (!(await this.placement.move(id, stage, false, true))) continue;
       this.placement.blockedAt.delete(id);

@@ -235,6 +235,18 @@ export class Placement {
   }
 
   /**
+   * True when the card carries `stage`'s own label, or nothing is known to compare. Only `releaseParked` asks: it
+   * shares the blocked bucket with `blocked`, so a status match alone left a card already Blocked without the
+   * Release parked label (Foreman review of #420).
+   */
+  async stageLabelMatches(id: string, stage: PaperclipStage | "done"): Promise<boolean> {
+    if (stage !== "releaseParked") return true;
+    const ids = await this.stageLabels();
+    const want = ids?.get(stage);
+    return !ids || !want || (this.index.rowContent.get(id)?.labelIds ?? []).includes(want);
+  }
+
+  /**
    * A held card its session's start could not move (Paperclip was down) takes
    * the session's column now. Otherwise the hold keeps every later writer off
    * it, and it shows its old column for the whole session: orders_service #131

@@ -166,18 +166,6 @@ export function holdOrigin(prior: Pick<VerifyHold, "heldAt"> & { originatedAt?: 
   return (prior?.originatedAt ?? prior?.heldAt ?? now).replace(/\.\d+Z$/, "Z");
 }
 
-/** What a parked, release-held card keeps: the stop's reason, who lifts it, and what resumes it. */
-export interface ReleaseParked {
-  /** ISO UTC, `Z`, whole seconds: the first pass that parked it. Kept across passes; a new stop after a restore starts a new one. */
-  since: string;
-  /** The stop's reason, as the release stop names it (the hold and the release PR). */
-  reason: string;
-  /** Who lifts the stop. */
-  owner: string;
-  /** The condition that resumes it. */
-  resumeWhen: string;
-}
-
 /** A merged PR whose dev verification did not pass (EM#440). */
 export interface VerifyHold {
   /** ISO timestamp of the last verify attempt. Resets on every rewrite; the basis of the release facts. */
@@ -233,11 +221,6 @@ export interface IssueRecord {
   skipped?: SkippedIssue;
   held?: HeldIssue;
   verifyHeld?: VerifyHold;
-  /**
-   * The issue's release is held by a stop (`release pending` + `blocked`) and it is parked off the active stages
-   * (ReleaseParking, EM#2985). Written when parked, deleted when the label goes; never read to promote, merge or grant.
-   */
-  releaseParked?: ReleaseParked;
   /** The release stage's read about this issue has failed on every scan since this time. */
   releaseReadHeld?: ReleaseReadHold;
   /** The EM questions asked about this issue, by `unstickKey` (src/unstick.ts). */
@@ -266,7 +249,7 @@ export interface IssueRecords {
   readonly unavailable: ReadonlySet<number>;
 }
 
-const FIELDS: readonly IssueField[] = ["failed", "skipped", "held", "verifyHeld", "releaseParked", "releaseReadHeld", "unstick", "stalls", "prodVerified", "noopClosed", "promotionStallNoted", "divergenceTold"];
+const FIELDS: readonly IssueField[] = ["failed", "skipped", "held", "verifyHeld", "releaseReadHeld", "unstick", "stalls", "prodVerified", "noopClosed", "promotionStallNoted", "divergenceTold"];
 
 /** A repo's own record is addressed with this number; no issue or PR is 0. */
 const REPO_RECORD_NUMBER = 0;

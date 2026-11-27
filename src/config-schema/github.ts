@@ -20,6 +20,11 @@ export const githubConventionsSchema = z.object({
   // Sessions get it as FOREMAN_BLOCKED_LABEL. Must differ from every trigger
   // and lifecycle label.
   blockedLabel: name.default("blocked"),
+  // The words of the person who holds this whole repo out of production (the EM's `repo-prod-holds.json`), or null. While set, an
+  // issue waiting on the EM's release grant (`pr approved`, or in a release PR) is parked off the active stages, as
+  // a release a stop holds is. It only moves where a card shows: nothing is promoted, merged or granted by it, and
+  // lifting it (set null) returns every card to the stage its labels call for.
+  prodHold: name.nullable().default(null),
   // The label on an issue that rode a release dark: its code is in production,
   // its flag off, its enablement unsigned (SLA-5216). Still `pr approved`, so
   // its card asks the EM to hold it on its enablement, not to run the release
