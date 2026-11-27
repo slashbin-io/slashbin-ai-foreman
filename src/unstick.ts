@@ -184,23 +184,48 @@ export const EVENT_KINDS: ReadonlySet<UnstickKind> = new Set<UnstickKind>([
 export const RELEASE_GATE_REASON = "at `pr approved` — dev verification passed, awaiting the EM outcome gate (`ready for prod release`)";
 
 /**
+ * The `**Release not before:** YYYY-MM-DD` date an issue body names (UTC), or null when the line is missing or the
+ * date is not a real calendar day. Pure, exported for tests.
+ */
+export function releaseNotBefore(body: string | null | undefined): string | null {
+  const m = /^\s*\*\*Release not before:\*\*\s*(\d{4}-\d{2}-\d{2})\s*$/im.exec(body ?? "");
+  if (!m) return null;
+  const d = new Date(`${m[1]}T00:00:00Z`);
+  return Number.isNaN(d.getTime()) || d.toISOString().slice(0, 10) !== m[1] ? null : m[1]!;
+}
+
+const NOT_BEFORE_SUFFIX = / \[not-before \d{4}-\d{2}-\d{2}\]$/;
+
+/** The suffix a still-future not-before date adds to the reason: empty on or after the date (UTC), so the date passing changes the reason. */
+export function notBeforeSuffix(notBefore: string | null | undefined, now: Date = new Date()): string {
+  return notBefore && now.toISOString().slice(0, 10) < notBefore ? ` [not-before ${notBefore}]` : "";
+}
+
+/**
  * The release-gate reason for one issue: the stable text, the issue's labels (sorted), and the EM's own
  * `em.mjs grant-state` answer when it gave one (opaque: the Foreman does not know where a grant can live). A grant
  * landing anywhere changes the answer, so the reason changes, `nextStep` calls the EM again and its answered-marker
- * no longer matches. The Foreman does not decide whether the release may go.
+ * no longer matches. The Foreman does not decide whether the release may go. A `**Release not before:**` date still
+ * ahead (UTC) adds ` [not-before DATE]`; the date arriving drops it, so the gate is called again that day.
  */
-export function releaseGateReason(labels: readonly string[], grantState?: string | null): string {
+export function releaseGateReason(labels: readonly string[], grantState?: string | null, notBefore?: string | null, now: Date = new Date()): string {
   const set = [...new Set(labels)].sort();
-  return (set.length ? `${RELEASE_GATE_REASON} [labels: ${set.join(", ")}]` : RELEASE_GATE_REASON) + (grantState ? ` [grant: ${grantState}]` : "");
+  return (set.length ? `${RELEASE_GATE_REASON} [labels: ${set.join(", ")}]` : RELEASE_GATE_REASON) + (grantState ? ` [grant: ${grantState}]` : "") + notBeforeSuffix(notBefore, now);
 }
 
 /**
  * The reason a release-gate candidate carries this pass. A grant state the EM could not give (null) keeps the
  * prior entry's reason, so a flaky read is not a new question; with no prior entry it is the reason without the grant part.
+ * The not-before part is recomputed on the kept reason (a date passing must still change it); `notBefore` undefined
+ * (the body could not be read) keeps the prior's not-before part too.
  */
-export function releaseGateCandidateReason(labels: readonly string[], grantState: string | null, priorReason?: string): string {
-  if (grantState === null && priorReason !== undefined) return priorReason;
-  return releaseGateReason(labels, grantState);
+export function releaseGateCandidateReason(labels: readonly string[], grantState: string | null, priorReason?: string, notBefore?: string | null, now: Date = new Date()): string {
+  if (grantState === null && priorReason !== undefined) {
+    const kept = priorReason.replace(NOT_BEFORE_SUFFIX, "");
+    return notBefore === undefined ? priorReason : kept + notBeforeSuffix(notBefore, now);
+  }
+  const base = releaseGateReason(labels, grantState, notBefore, now);
+  return notBefore === undefined && priorReason !== undefined ? base + (NOT_BEFORE_SUFFIX.exec(priorReason)?.[0] ?? "") : base;
 }
 
 /**

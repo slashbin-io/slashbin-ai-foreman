@@ -8,7 +8,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
-  UNSTICK_KINDS, UNSTICK_MAX_ATTEMPTS, derivedCandidates, needsCall, nextStep, handoffGiveUpComment, openEntry, unstickKey, releaseGateReason, releaseGateCandidateReason,
+  UNSTICK_KINDS, UNSTICK_MAX_ATTEMPTS, derivedCandidates, needsCall, nextStep, handoffGiveUpComment, openEntry, unstickKey, releaseGateReason, releaseGateCandidateReason, releaseNotBefore,
 } from "../dist/unstick.js";
 import { applyOutcome } from "../dist/phases/unstick.js";
 import { DEFAULT_BACKOFF } from "../dist/backoff.js";
@@ -292,4 +292,42 @@ test("grantStateViaEm: exit 0 gives the trimmed stdout; non-zero, empty, tokenle
   } finally {
     if (saved !== undefined) process.env.EM_GITHUB_TOKEN = saved;
   }
+});
+
+// foreman#423: `**Release not before:** YYYY-MM-DD` re-calls the release gate when the date arrives.
+test("releaseNotBefore: parses the line; a missing line or a malformed or impossible date is null", () => {
+  assert.equal(releaseNotBefore("intro\n**Release not before:** 2026-12-01\nmore"), "2026-12-01");
+  assert.equal(releaseNotBefore("no such line"), null);
+  assert.equal(releaseNotBefore(""), null);
+  assert.equal(releaseNotBefore(undefined), null);
+  assert.equal(releaseNotBefore("**Release not before:** 12/01/2026"), null);
+  assert.equal(releaseNotBefore("**Release not before:** 2026-13-40"), null);
+  assert.equal(releaseNotBefore("**Release not before:** 2026-02-30"), null);
+});
+
+test("releaseGateReason: a future not-before is in the reason; on or after the date it is not, and an acted gate is called again", () => {
+  const labels = ["pr approved", "approved"];
+  const before = new Date("2026-11-30T23:59:59Z");
+  const onDay = new Date("2026-12-01T00:00:00Z");
+  const held = releaseGateReason(labels, null, "2026-12-01", before);
+  const open = releaseGateReason(labels, null, "2026-12-01", onDay);
+  assert.match(held, /\[not-before 2026-12-01\]$/);
+  assert.doesNotMatch(open, /not-before/);
+  assert.equal(releaseGateReason(labels, null, null, before), open, "no line: no suffix");
+  const acted = { issue: 5, kind: "release-gate", reason: held, status: "invoked", attempts: 1, since: "t", lastCallAt: new Date(0).toISOString(), recalls: 2 };
+  assert.equal(nextStep(acted, { issue: 5, kind: "release-gate", reason: held }, 1, H0), "wait");
+  assert.equal(nextStep(acted, { issue: 5, kind: "release-gate", reason: open }, 1, H0), "call");
+});
+
+test("releaseGateCandidateReason: a null grant read keeps the prior reason but the not-before part still follows the date", () => {
+  const labels = ["pr approved"];
+  const before = new Date("2026-11-30T00:00:00Z");
+  const after = new Date("2026-12-02T00:00:00Z");
+  const prior = releaseGateCandidateReason(labels, '{"granted": true}', undefined, "2026-12-01", before);
+  assert.match(prior, /\[grant: .*\] \[not-before 2026-12-01\]$/);
+  assert.equal(releaseGateCandidateReason(labels, null, prior, "2026-12-01", before), prior, "flaky grant read: unchanged");
+  const later = releaseGateCandidateReason(labels, null, prior, "2026-12-01", after);
+  assert.doesNotMatch(later, /not-before/);
+  assert.match(later, /\[grant: /, "grant part kept");
+  assert.equal(releaseGateCandidateReason(labels, null, prior, undefined, after), prior, "unreadable body keeps the prior part");
 });
