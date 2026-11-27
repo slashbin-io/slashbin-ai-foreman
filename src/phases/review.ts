@@ -238,8 +238,13 @@ async function reviewPass(
     await emit(rt, { kind: "session", session: { ...session, status: "started", at: stamp(), reviewer } }, null, reviewLogger);
     // The reviewer's "wrote nothing" exit (its engine unavailable) is a wait,
     // never a hand-off: no failure is charged and the repo asks again after a backoff.agentUnavailable wait.
-    const result = await agent.reviewPr(repoConfig, config, candidate.prNumber, reviewLogger, runAbort.signal, transcriptPath, onProgress, noMerge)
+    let result = await agent.reviewPr(repoConfig, config, candidate.prNumber, reviewLogger, runAbort.signal, transcriptPath, onProgress, noMerge)
       .catch((e: unknown): ReviewFallback => ({ fallback: true, reason: `Tech Lead launch threw: ${String(e)}` }));
+    // The empty-POST defer is bounded: once it has spent repoFailure.maxFailures waits in a row, the review fails as
+    // any other (charged, the existing failure handling) instead of deferring forever.
+    if ("fallback" in result && result.ambiguousPost && rt.memory.reviewDefer.count(repoName) >= repoFailure.maxFailures) {
+      result = { success: false, error: `Tech Lead review failed after ${repoFailure.maxFailures} empty review-POST responses: ${result.reason}` };
+    }
     if ("fallback" in result) {
       const wait = formatWait(rt.memory.reviewDefer.start(repoName, agentUnavailable));
       ended = { status: "failed", outcome: "failed", detail: `Tech Lead could not take it (${result.reason}) — retried in ${wait}` };

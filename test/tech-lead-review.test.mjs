@@ -9,7 +9,7 @@ import assert from "node:assert/strict";
 import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { reviewViaTechLead } from "../dist/plugins/tech-lead.js";
+import { reviewViaTechLead, isEmptyPostResponseError } from "../dist/plugins/tech-lead.js";
 
 const logger = { info() {}, warn() {}, error() {}, debug() {}, child() { return this; } };
 const repo = { name: "r", githubRepo: "o/r" };
@@ -112,5 +112,49 @@ test("HTTP 500 on stderr is deferred, transient, not a failure", async () => {
   const cfg = fakeTechLead('console.error("review-pr failed: gh pr view 7: HTTP 500: Internal Server Error"); process.exit(1);');
   const r = await reviewViaTechLead(repo, cfg, 7, logger);
   assert.equal(r.fallback, true);
+  assert.equal(r.unavailable, true);
+});
+
+// foreman#392: an empty response on the Tech Lead's GitHub write is a bounded tooling defer, never a claimed review.
+const POST = "review-pr failed: gh api --method POST repos/o/r/pulls/7/x: unexpected end of JSON input";
+
+test("exit 1 with an empty-JSON gh POST is deferred as transient and claims no review", async () => {
+  for (const line of [POST, "review-pr failed: gh api -X POST repos/o/r/pulls/7/x: unexpected end of JSON input"]) {
+    const cfg = fakeTechLead(`console.error(${JSON.stringify(line)}); process.exit(1);`);
+    const r = await reviewViaTechLead(repo, cfg, 7, logger);
+    assert.equal(r.fallback, true, line);
+    assert.equal(r.unavailable, true);
+    assert.equal(r.ambiguousPost, true);
+    assert.equal("success" in r, false);
+    assert.equal("trailers" in r, false);
+  }
+});
+
+test("a bare JSON parse error, a GET, auth, 404, 422 and rate-limit are not the empty-POST signature", async () => {
+  for (const line of [
+    "review-pr failed: unexpected end of JSON input",
+    "review-pr failed: gh api repos/o/r/pulls/7: unexpected end of JSON input",
+    "review-pr failed: gh api --method POST repos/o/r: HTTP 401: Bad credentials",
+    "review-pr failed: gh api --method POST repos/o/r: HTTP 403: Forbidden",
+    "review-pr failed: gh api --method POST repos/o/r: HTTP 404: Not Found",
+    "review-pr failed: gh api --method POST repos/o/r: HTTP 422: Validation Failed",
+    "review-pr failed: gh api --method POST repos/o/r: API rate limit exceeded",
+    "review-pr failed: gh api --method POST repos/o/r: HTTP 403 rate limit; unexpected end of JSON input",
+    "review-pr failed: gh api --method POST repos/o/r/pulls/7/x: HTTP 429: unexpected end of JSON input",
+  ]) {
+    assert.equal(isEmptyPostResponseError(line), false, line);
+    const cfg = fakeTechLead(`console.error(${JSON.stringify(line)}); process.exit(1);`);
+    const r = await reviewViaTechLead(repo, cfg, 7, logger);
+    assert.equal("fallback" in r, false, line);
+    assert.equal(r.success, false, line);
+  }
+  assert.equal(isEmptyPostResponseError(POST), true);
+});
+
+test("a POST path with a refusal-looking number is still the empty-POST signature; with ECONNRESET it still carries ambiguousPost", async () => {
+  for (const n of [401, 403, 404, 422]) assert.equal(isEmptyPostResponseError(`review-pr failed: gh api --method POST repos/o/r/pulls/${n}/x: unexpected end of JSON input`), true, String(n));
+  const cfg = fakeTechLead(`console.error(${JSON.stringify(POST + "; ECONNRESET")}); process.exit(1);`);
+  const r = await reviewViaTechLead(repo, cfg, 7, logger);
+  assert.equal(r.ambiguousPost, true);
   assert.equal(r.unavailable, true);
 });

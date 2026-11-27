@@ -44,6 +44,7 @@ const scenarios = {
   tlsExit3: 'console.error("gh pr view 7: net/http: TLS handshake timeout"); console.log("retry later"); process.exit(3);',
   unavailableExit3: 'console.log("GitHub unavailable after 4 attempts — nothing written; retry later."); process.exit(3);',
   http500Exit1: 'console.error("review-pr failed: gh pr view 7: HTTP 500: Internal Server Error"); process.exit(1);',
+  emptyPost: 'console.error("review-pr failed: gh api --method POST repos/o/r/pulls/7/x: unexpected end of JSON input"); process.exit(1);',
   codexExit3: 'console.log("Codex first read failed (signed-out) — nothing written"); process.exit(3);',
 };
 const events = [];
@@ -89,4 +90,20 @@ test("codexExit3: the visible wait still blocks the card, anchored on inReview",
   assert.equal(result, false);
   assert.equal(blocked.length, 1);
   assert.equal(blocked[0].at, "inReview");
+});
+
+test("emptyPost: deferred without a blocked event up to the retry cap, then the ordinary failure handling applies", async () => {
+  const cap = config.backoff.repoFailure.maxFailures;
+  for (let i = 0; i < cap - 1; i++) {
+    rt.memory.reviewDefer.clear("emptyPost");
+    for (let k = 0; k < i; k++) rt.memory.reviewDefer.start("emptyPost", config.backoff.agentUnavailable, 0);
+    const { result, blocked } = await run("emptyPost");
+    assert.equal(result, false);
+    assert.deepEqual(blocked, [], `pass ${i + 1}`);
+  }
+  rt.memory.reviewDefer.clear("emptyPost");
+  for (let k = 0; k < cap; k++) rt.memory.reviewDefer.start("emptyPost", config.backoff.agentUnavailable, 0);
+  const { result } = await run("emptyPost");
+  assert.equal(result, false);
+  assert.equal(rt.memory.reviewFailureCount.get("emptyPost"), 1, "charged as a review failure after the cap");
 });
