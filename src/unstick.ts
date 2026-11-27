@@ -194,11 +194,16 @@ export function releaseNotBefore(body: string | null | undefined): string | null
   return Number.isNaN(d.getTime()) || d.toISOString().slice(0, 10) !== m[1] ? null : m[1]!;
 }
 
-const NOT_BEFORE_SUFFIX = / \[not-before \d{4}-\d{2}-\d{2}\]$/;
+const NOT_BEFORE_SUFFIX = / \[not-before \d{4}-\d{2}-\d{2}(?: reached)?\]$/;
 
-/** The suffix a still-future not-before date adds to the reason: empty on or after the date (UTC), so the date passing changes the reason. */
+/**
+ * The suffix a not-before date adds to the reason: ` [not-before DATE]` while it is ahead (UTC), ` [not-before DATE reached]`
+ * on or after it. The reached form is its own text, so the date passing never restores a reason the EM already answered
+ * (dropping the suffix would bring back the pre-date reason and its answered-marker, and the gate would never rerun).
+ */
 export function notBeforeSuffix(notBefore: string | null | undefined, now: Date = new Date()): string {
-  return notBefore && now.toISOString().slice(0, 10) < notBefore ? ` [not-before ${notBefore}]` : "";
+  if (!notBefore) return "";
+  return now.toISOString().slice(0, 10) < notBefore ? ` [not-before ${notBefore}]` : ` [not-before ${notBefore} reached]`;
 }
 
 /**
@@ -206,7 +211,7 @@ export function notBeforeSuffix(notBefore: string | null | undefined, now: Date 
  * `em.mjs grant-state` answer when it gave one (opaque: the Foreman does not know where a grant can live). A grant
  * landing anywhere changes the answer, so the reason changes, `nextStep` calls the EM again and its answered-marker
  * no longer matches. The Foreman does not decide whether the release may go. A `**Release not before:**` date still
- * ahead (UTC) adds ` [not-before DATE]`; the date arriving drops it, so the gate is called again that day.
+ * ahead (UTC) adds ` [not-before DATE]`; the date arriving turns it into ` [not-before DATE reached]`, so the gate is called again that day.
  */
 export function releaseGateReason(labels: readonly string[], grantState?: string | null, notBefore?: string | null, now: Date = new Date()): string {
   const set = [...new Set(labels)].sort();
