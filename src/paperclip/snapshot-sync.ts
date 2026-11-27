@@ -186,6 +186,8 @@ export class SnapshotSync {
       if (nowState === want && this.placement.holderMatches(id, stage) && (await this.placement.stageLabelMatches(id, stage))) continue;
       // Read open live: a card closed for it before is the issue reopened.
       if (!(await this.placement.move(id, stage, false, true))) continue;
+      // The cached row now names the labels just written, so an unchanged snapshot does not place the card again.
+      await this.index.refreshRow(id);
       this.placement.blockedAt.delete(id);
       this.placement.persistBlock(id);
       if (stage === "blocked" || stage === "releaseParked") this.placement.labelBlocked.add(id);

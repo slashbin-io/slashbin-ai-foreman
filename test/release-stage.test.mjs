@@ -1280,8 +1280,8 @@ test("a release stopped for a person names its issue and hold, once per change �
   const warns = log.at("warn");
   assert.equal(warns.length, 1, "one WARN");
   assert.ok(!STALLED.test(warns[0]), "not reported as an unnamed stall");
-  assert.match(warns[0], /release of #5 held: blocked after predeploy-stop on PR #100 — waiting on a person/);
-  assert.match(warns[0], /release of #6 held: blocked after predeploy-stop on PR #100 — waiting on a person/);
+  assert.match(warns[0], /release of #5 held: blocked after predeploy-stop on PR #100 — the owner who set the stop lifts `blocked`; the release resumes when it is lifted/);
+  assert.match(warns[0], /release of #6 held: blocked after predeploy-stop on PR #100 — the owner who set the stop lifts `blocked`; the release resumes when it is lifted/);
 
   // The next check, unchanged: a debug line, no WARN, no comment read, nothing commented.
   log.clear();
@@ -1315,7 +1315,7 @@ test("a held issue with no stop comment is still named, by the release PR that l
   await tryPromotion(rt, repo, log, 23_000, true);
   const warns = log.at("warn");
   assert.equal(warns.length, 1);
-  assert.match(warns[0], /release of #1283 held: blocked on PR #1292 — waiting on a person/);
+  assert.match(warns[0], /release of #1283 held: blocked on PR #1292 — the owner who set the stop lifts `blocked`; the release resumes when it is lifted/);
 });
 
 // --- ReleaseParking (EM#2985) ---------------------------------------------------------

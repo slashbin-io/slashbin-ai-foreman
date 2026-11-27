@@ -187,7 +187,7 @@ async function describeHeld(repoConfig: RepoConfig, n: number, fallbackPr: numbe
   }
   const pr = stop?.pr ?? fallbackPr;
   return `release of #${n} held: ${repoConfig.github.blockedLabel}${stop ? ` after ${stop.hold}` : ""}` +
-    `${pr ? ` on PR #${pr}` : ""} — waiting on a person`;
+    `${pr ? ` on PR #${pr}` : ""} — the owner who set the stop lifts \`${repoConfig.github.blockedLabel}\`; the release resumes when it is lifted, under its normal gates and sign-off`;
 }
 
 async function noteHeldRelease(rt: ForemanRuntime, repoConfig: RepoConfig, held: number[], files: number, logger: Logger): Promise<string> {

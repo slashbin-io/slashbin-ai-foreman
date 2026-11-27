@@ -235,15 +235,17 @@ export class Placement {
   }
 
   /**
-   * True when the card carries `stage`'s own label, or nothing is known to compare. Only `releaseParked` asks: it
-   * shares the blocked bucket with `blocked`, so a status match alone left a card already Blocked without the
-   * Release parked label (Foreman review of #420).
+   * True when the card's Release parked label agrees with `stage` (carried on releaseParked, absent on every other
+   * stage), or nothing is known to compare. The stage shares the blocked bucket with `blocked` and `awaitingSignoff`,
+   * so a status match alone left a Blocked card unlabelled, and a restored card still parked (Foreman review of #420).
    */
   async stageLabelMatches(id: string, stage: PaperclipStage | "done"): Promise<boolean> {
-    if (stage !== "releaseParked") return true;
     const ids = await this.stageLabels();
-    const want = ids?.get(stage);
-    return !ids || !want || (this.index.rowContent.get(id)?.labelIds ?? []).includes(want);
+    const parked = ids?.get("releaseParked");
+    if (!ids || !parked) return true;
+    const has = (this.index.rowContent.get(id)?.labelIds ?? []).includes(parked);
+    // Parked takes the label; every other stage must shed it, or a restore to a stage in the same bucket keeps the parked card.
+    return stage === "releaseParked" ? has : !has;
   }
 
   /**

@@ -760,6 +760,25 @@ test("snapshot: an existing Blocked card of a release-held issue takes the Relea
   assert.ok(!labelName(fake, fake.rows[0]).includes("Release parked"));
 });
 
+test("snapshot: a parked card is placed once across unchanged snapshots, and a restore to a stage in the same bucket sheds the parked label once (Foreman review of 420)", async () => {
+  const fake = fakePaperclip([row7("blocked", { unblockDescriptor: { action: "blocked: needs attention" } })]);
+  const { mirror } = mirrorOn(fake);
+  const patches = () => fake.calls.filter((c) => c.method === "PATCH").length;
+  const held = [{ number: 7, labels: ["release pending", "blocked"] }];
+  await onSnap(mirror, "example/r", snap(held), logger());
+  const first = patches();
+  assert.ok(first > 0);
+  for (let i = 0; i < 4; i++) await onSnap(mirror, "example/r", snap(held), logger());
+  assert.equal(patches(), first, "unchanged parked snapshots write nothing more");
+  const gated = [{ item: { issueNumber: 7, repo: "example/r" }, stage: "awaitingSignoff", detail: "release pending" }];
+  await onSnap(mirror, "example/r", gated, logger());
+  assert.ok(!labelName(fake, fake.rows[0]).includes("Release parked"), "restored to sign-off: the parked label is gone");
+  const restored = patches();
+  assert.ok(restored > first);
+  await onSnap(mirror, "example/r", gated, logger());
+  assert.equal(patches(), restored, "and placed once");
+});
+
 test("snapshot: after a restart, a label-made block (its last note the sync note) is released; a Foreman block is kept", async () => {
   const fake = fakePaperclip([
     row7("blocked", { unblockDescriptor: { action: "blocked: needs attention" } }),
