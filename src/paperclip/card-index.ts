@@ -211,7 +211,12 @@ export class CardIndex {
     if (row.status === blockedName && action) this.blockAction.set(id, String(action));
     else this.blockAction.delete(id);
     const have = this.rowContent.get(id);
-    if (have) this.rowContent.set(id, { ...have, assigneeAgentId: row.assigneeAgentId ?? null, assigneeUserId: row.assigneeUserId ?? null });
+    if (have) {
+      this.rowContent.set(id, {
+        ...have, assigneeAgentId: row.assigneeAgentId ?? null, assigneeUserId: row.assigneeUserId ?? null,
+        ...(Array.isArray(row.labelIds) ? { labelIds: row.labelIds } : {}),
+      });
+    }
   }
 
   /** The repo (`githubRepo`) card `id` belongs to, from the identity key its row was read under. */

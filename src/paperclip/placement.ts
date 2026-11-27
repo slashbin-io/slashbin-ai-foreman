@@ -235,6 +235,20 @@ export class Placement {
   }
 
   /**
+   * True when the card's Release parked label agrees with `stage` (carried on releaseParked, absent on every other
+   * stage), or nothing is known to compare. The stage shares the blocked bucket with `blocked` and `awaitingSignoff`,
+   * so a status match alone left a Blocked card unlabelled, and a restored card still parked (Foreman review of #420).
+   */
+  async stageLabelMatches(id: string, stage: PaperclipStage | "done"): Promise<boolean> {
+    const ids = await this.stageLabels();
+    const parked = ids?.get("releaseParked");
+    if (!ids || !parked) return true;
+    const has = (this.index.rowContent.get(id)?.labelIds ?? []).includes(parked);
+    // Parked takes the label; every other stage must shed it, or a restore to a stage in the same bucket keeps the parked card.
+    return stage === "releaseParked" ? has : !has;
+  }
+
+  /**
    * A held card its session's start could not move (Paperclip was down) takes
    * the session's column now. Otherwise the hold keeps every later writer off
    * it, and it shows its old column for the whole session: orders_service #131
@@ -275,7 +289,7 @@ export class Placement {
       if (to !== SESSION_STAGE[h.phase]) h.restore = to;
       return true;
     }
-    if (await this.runInFlight(id, to === "done" ? "done" : stageTarget(this.env.cfg, to, to === "blocked" ? this.blockedOwner.get(id) : undefined).bucket)) {
+    if (await this.runInFlight(id, to === "done" ? "done" : stageTarget(this.env.cfg, to, (to === "blocked" || to === "releaseParked") ? this.blockedOwner.get(id) : undefined).bucket)) {
       this.deferredMoves.set(id, to);
       return false;
     }
@@ -286,14 +300,14 @@ export class Placement {
     // Done is a closed issue's, and nobody's (Foreman #112): a released card left on its holder.
     if (to === "done") { bucket = "done"; holder = { assigneeAgentId: null, assigneeUserId: null }; }
     else {
-      const t = stageTarget(this.env.cfg, to, to === "blocked" ? this.blockedOwner.get(id) : undefined);
+      const t = stageTarget(this.env.cfg, to, (to === "blocked" || to === "releaseParked") ? this.blockedOwner.get(id) : undefined);
       bucket = t.bucket;
       label = t.label;
       if (t.agentId) holder = { assigneeAgentId: t.agentId, assigneeUserId: null };
       // Paperclip takes `blocked` only with an unblock descriptor.
       if (bucket === "blocked") {
         // A card held on GitHub says why, as the holder wrote it (`ownsCards`).
-        const action = this.blockedReason.get(id) ?? (to === "blocked" ? this.holdAction.get(id) : undefined) ?? LABEL_BLOCK_ACTION;
+        const action = this.blockedReason.get(id) ?? ((to === "blocked" || to === "releaseParked") ? this.holdAction.get(id) : undefined) ?? LABEL_BLOCK_ACTION;
         holder.unblockDescriptor = { owner: t.agentId ? { agentId: t.agentId } : "board", action };
       }
     }

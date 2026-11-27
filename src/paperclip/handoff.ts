@@ -154,6 +154,13 @@ export const STAGE_HANDOFF: Readonly<Record<Stage, StageHandoff>> = Object.freez
     why: "the release {pr}'s EM sign-off status is failing ({unsignedWhy})",
     done: "the sign-off status turns green (the card returns to Releasing)",
   },
+  releaseParked: {
+    act: false,
+    todo: "Parked: a stop holds the release of {issue} (the reason is above). Nothing is promoted, merged or granted from this card, and age never lifts the stop. Its sign-off is still needed after it returns.",
+    next: "nothing; the stop on {issue} stands until the `blocked` label is lifted",
+    why: "a stop holds the release of {issue} (`blocked` on a `release pending` issue)",
+    done: "the `blocked` label is lifted (the card returns to Releasing once; the normal gates and sign-off still apply)",
+  },
   prodVerifyHeld: {
     act: true,
     todo: "Sort the hold: read the newest production-verification comment on {issue}. A wait (`wait-until-…` within 24 hours, no traffic yet, a soak) needs nothing, the Foreman re-verifies on a back-off. A check observable only after the next 24 hours is a scheduled Paperclip follow-up, not an open card: the card closes on everything observable now. A check that could not observe the outcome is a verifier defect: file it. Production actually broken: file a new corrective issue. Never re-verify by hand.",

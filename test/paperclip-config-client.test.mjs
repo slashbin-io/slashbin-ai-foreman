@@ -43,7 +43,7 @@ test("no paperclip block: mirror off, every default applied", () => {
   const { board, stageLabels, roles, ...rest } = paperclip;
   assert.deepEqual(roles, {}, "no roles: the Foreman holds every card");
   assert.ok(Object.values(board).every((s) => s.owner === "foreman"));
-  assert.deepEqual(Object.keys(stageLabels).sort(), ["awaitingRelease", "awaitingSignoff", "blocked", "changesRequested", "inReview", "merged", "needsRuling", "pendingVerification", "prodVerifyHeld", "qaReviewing", "releaseAuthorized", "releasing"]);
+  assert.deepEqual(Object.keys(stageLabels).sort(), ["awaitingRelease", "awaitingSignoff", "blocked", "changesRequested", "inReview", "merged", "needsRuling", "pendingVerification", "prodVerifyHeld", "qaReviewing", "releaseAuthorized", "releaseParked", "releasing"]);
   assert.deepEqual({ ...rest }, {
     liveLeaseMinutes: 15,
     publishConfig: true,

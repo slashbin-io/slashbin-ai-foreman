@@ -120,7 +120,7 @@ export class SnapshotSync {
       }
       const want = `status:${this.env.statusName(stage === "done" ? "done" : stageTarget(this.env.cfg, stage).bucket)}`;
       // The holder counts as much as the column: a lost hand-off leaves the status right and the seat wrong (Foreman #100).
-      if (state === want && this.placement.holderMatches(id, stage)) continue;
+      if (state === want && this.placement.holderMatches(id, stage) && (await this.placement.stageLabelMatches(id, stage))) continue;
       // A Foreman block is released by GitHub moving on, not by another writer:
       // the stage owner's own wake checks the card out to in_progress, and
       // matching that to GitHub took SLA-1335 out of the EM's hands (2026-10-14).
@@ -134,7 +134,7 @@ export class SnapshotSync {
         if (await this.placement.holdStandsAt(id, stage)) continue;
       }
       this.placement.escalatedAt.delete(id);
-      if ((state === blocked || this.placement.blockedAt.has(id)) && stage !== "blocked" && !(await this.blockedByLabel(id))) {
+      if ((state === blocked || this.placement.blockedAt.has(id)) && stage !== "blocked" && stage !== "releaseParked" && !(await this.blockedByLabel(id))) {
         // A block from before this process started stands only while the Foreman's state still holds the issue:
         // security_tests#398 sat Blocked at `release pending` after every hold was gone (2026-10-26).
         // A block read back from the store is that kind of block too.
@@ -183,12 +183,14 @@ export class SnapshotSync {
       if (nowState.startsWith("waiting\n")) continue;
       // Only a hold new since the scan: one the cache showed was weighed above, and GitHub moving on released it.
       if (state !== blocked && this.placement.externalHold(id) && (await this.placement.holdStandsAt(id, stage))) continue;
-      if (nowState === want && this.placement.holderMatches(id, stage)) continue;
+      if (nowState === want && this.placement.holderMatches(id, stage) && (await this.placement.stageLabelMatches(id, stage))) continue;
       // Read open live: a card closed for it before is the issue reopened.
       if (!(await this.placement.move(id, stage, false, true))) continue;
+      // The cached row now names the labels just written, so an unchanged snapshot does not place the card again.
+      await this.index.refreshRow(id);
       this.placement.blockedAt.delete(id);
       this.placement.persistBlock(id);
-      if (stage === "blocked") this.placement.labelBlocked.add(id);
+      if (stage === "blocked" || stage === "releaseParked") this.placement.labelBlocked.add(id);
       else this.placement.labelBlocked.delete(id);
       logger.info(`Paperclip: ${item.repo}#${item.issueNumber} card ${state.slice(7)} → ${want.slice(7)}${state === want ? ", re-assigned" : ""} to match GitHub`);
       await this.notes.note(id, fill(PAPERCLIP_STEPS.synced.note, { detail }), { event: "progress", handoff: handoffTo(stage, item) });
@@ -216,7 +218,7 @@ export class SnapshotSync {
       this.learnSignoff(id, signoff);
       if (c) ids.push([c, id]);
       if (!(await this.placement.move(id, stage, false, true))) continue;
-      if (stage === "blocked") this.placement.labelBlocked.add(id);
+      if (stage === "blocked" || stage === "releaseParked") this.placement.labelBlocked.add(id);
       logger.info(`Paperclip: ${item.repo}#${item.issueNumber} had no card: created at ${stage} to match GitHub`);
       await this.notes.note(id, fill(PAPERCLIP_STEPS.synced.note, { detail }), { event: "progress", handoff: handoffTo(stage, item) });
     }

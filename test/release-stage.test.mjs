@@ -1280,8 +1280,8 @@ test("a release stopped for a person names its issue and hold, once per change �
   const warns = log.at("warn");
   assert.equal(warns.length, 1, "one WARN");
   assert.ok(!STALLED.test(warns[0]), "not reported as an unnamed stall");
-  assert.match(warns[0], /release of #5 held: blocked after predeploy-stop on PR #100 — waiting on a person/);
-  assert.match(warns[0], /release of #6 held: blocked after predeploy-stop on PR #100 — waiting on a person/);
+  assert.match(warns[0], /release of #5 held: blocked after predeploy-stop on PR #100 — the owner who set the stop lifts `blocked`; the release resumes when it is lifted/);
+  assert.match(warns[0], /release of #6 held: blocked after predeploy-stop on PR #100 — the owner who set the stop lifts `blocked`; the release resumes when it is lifted/);
 
   // The next check, unchanged: a debug line, no WARN, no comment read, nothing commented.
   log.clear();
@@ -1315,7 +1315,51 @@ test("a held issue with no stop comment is still named, by the release PR that l
   await tryPromotion(rt, repo, log, 23_000, true);
   const warns = log.at("warn");
   assert.equal(warns.length, 1);
-  assert.match(warns[0], /release of #1283 held: blocked on PR #1292 — waiting on a person/);
+  assert.match(warns[0], /release of #1283 held: blocked on PR #1292 — the owner who set the stop lifts `blocked`; the release resumes when it is lifted/);
+});
+
+// --- ReleaseParking (EM#2985) ---------------------------------------------------------
+// The park is derived from the labels (`issueStage`): there is no stored record, so a pass writes nothing to GitHub.
+
+const WRITES = /^(merge|edit|comment|close|reopen)$/;
+const issuePrWrites = (calls) => calls.filter((c) => (c[0] === "pr" || c[0] === "issue") && WRITES.test(c[1] ?? ""));
+const HELD_WORLD = () => world({ issues: [issue(1283, "release pending", "blocked")], prs: [releasePr(1292, "## Production Promotion\n\n### Issues included\n- #1283: Issue 1283")], compareFiles: 4 });
+
+test("a release-held issue stays held 40 check cycles on, never closed, and the passes write nothing to GitHub", async () => {
+  HELD_WORLD();
+  const callsBefore = ghCalls().length;
+  await tryPromotion(rt, repo, captureLogger(), 24_000, true);
+  await tryPromotion(rt, repo, captureLogger(), 24_000 + 40 * STALL_CHECK_CYCLE_INTERVAL, true);
+  assert.deepEqual(issuePrWrites(ghCalls().slice(callsBefore)), [], "parking writes no label, comment, merge or close");
+  assert.notEqual(gh().issues[1283].state, "CLOSED", "a parked card is never auto-closed");
+  assert.ok(gh().issues[1283].labels.includes("blocked") && gh().issues[1283].labels.includes("release pending"), "labels untouched");
+});
+
+test("restore: lifting `blocked` triggers no merge, edit, comment, close, label or grant", async () => {
+  HELD_WORLD();
+  await tryPromotion(rt, repo, captureLogger(), 25_000, true);
+  const st = gh();
+  st.issues[1283].labels = st.issues[1283].labels.filter((l) => l !== "blocked");
+  writeFileSync(GH_STATE, JSON.stringify(st));
+  const labelsBefore = [...gh().issues[1283].labels];
+  const callsBefore = ghCalls().length;
+  await tryPromotion(rt, repo, captureLogger(), 25_000 + STALL_CHECK_CYCLE_INTERVAL, true);
+  assert.deepEqual(gh().issues[1283].labels, labelsBefore, "labels are what the person left: nothing granted");
+  assert.ok(!labelsBefore.includes("pr approved") && !labelsBefore.includes("verified"), "no sign-off was added");
+  assert.deepEqual(issuePrWrites(ghCalls().slice(callsBefore)), [], "restore triggers no merge, edit, comment or close");
+});
+
+test("a repo held out of production (github.prodHold): a pass writes nothing, and lifting the hold promotes nothing", async () => {
+  world({ issues: [issue(1300, "pr approved")], prs: [], compareFiles: 0 });
+  const held = { ...repo, github: { ...repo.github, prodHold: "owner: not sending this repo to prod yet" } };
+  const callsBefore = ghCalls().length;
+  await tryPromotion(rt, held, captureLogger(), 27_000, true);
+  assert.deepEqual(issuePrWrites(ghCalls().slice(callsBefore)), [], "a held repo's pass writes nothing");
+  const labelsBefore = [...gh().issues[1300].labels];
+  const afterLift = ghCalls().length;
+  await tryPromotion(rt, repo, captureLogger(), 27_000 + STALL_CHECK_CYCLE_INTERVAL, true);
+  assert.deepEqual(gh().issues[1300].labels, labelsBefore, "lifting the hold grants nothing");
+  assert.deepEqual(issuePrWrites(ghCalls().slice(afterLift)), [], "lifting the hold merges and promotes nothing");
 });
 
 // --- Pure pieces ------------------------------------------------------------------
