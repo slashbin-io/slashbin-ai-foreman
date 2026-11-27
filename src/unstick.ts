@@ -450,7 +450,9 @@ export interface FreshUnrelated {
 /** `label` with every regex metacharacter escaped. */
 
 /** Words on a reference line that say the epic named there is not this issue's own. */
-const NOT_OWN_EPIC = /\b(sibling|predecessor|successor|supersed\w*|split (?:from|out of)|follow-?up (?:of|to))\b/i;
+// "not a child of it" / "theme dependency": an epic this issue depends on is a precondition, not its parent
+// (two children naming a theme epic as a dependency each raised it on 2026-11-26).
+const NOT_OWN_EPIC = /\b(sibling|predecessor|successor|supersed\w*|split (?:from|out of)|follow-?up (?:of|to)|not (?:a )?(?:child|part) of|depend(?:s|ency|ent|s on)|blocked by|precondition)\b/i;
 
 /**
  * The epics an issue body names as `<label> #N` (config `epicRefLabel`, the
