@@ -305,14 +305,15 @@ test("releaseNotBefore: parses the line; a missing line or a malformed or imposs
   assert.equal(releaseNotBefore("**Release not before:** 2026-02-30"), null);
 });
 
-test("releaseGateReason: a future not-before is in the reason; on or after the date it reads reached, and an acted gate is called again", () => {
+test("releaseGateReason: a future not-before is in the reason; on or after the date it reads release-date-reached, and an acted gate is called again", () => {
   const labels = ["pr approved", "approved"];
   const before = new Date("2026-11-30T23:59:59Z");
   const onDay = new Date("2026-12-01T00:00:00Z");
   const held = releaseGateReason(labels, null, "2026-12-01", before);
   const open = releaseGateReason(labels, null, "2026-12-01", onDay);
   assert.match(held, /\[not-before 2026-12-01\]$/);
-  assert.match(open, /\[not-before 2026-12-01 reached\]$/);
+  assert.match(open, /\[release-date-reached 2026-12-01\]$/);
+  assert.doesNotMatch(open, /not-before/);
   assert.notEqual(releaseGateReason(labels, null, null, before), open, "the reached reason differs from the no-date reason");
   assert.doesNotMatch(releaseGateReason(labels, null, null, before), /not-before/, "no line: no suffix");
   const acted = { issue: 5, kind: "release-gate", reason: held, status: "invoked", attempts: 1, since: "t", lastCallAt: new Date(0).toISOString(), recalls: 2 };
@@ -328,6 +329,7 @@ test("releaseGateReason: a date added to an already-answered card, then passed, 
   const reached = releaseGateReason(labels, '{"granted": true}', "2026-12-08", new Date("2026-12-08T00:00:00Z"));
   assert.notEqual(reached, answered);
   assert.notEqual(reached, held);
+  assert.doesNotMatch(reached, /not-before/);
   assert.equal(nextStep({ ...acted, reason: held }, { issue: 7, kind: "release-gate", reason: reached }, 1, H0), "call");
 });
 
@@ -339,8 +341,9 @@ test("releaseGateCandidateReason: a null grant read keeps the prior reason but t
   assert.match(prior, /\[grant: .*\] \[not-before 2026-12-01\]$/);
   assert.equal(releaseGateCandidateReason(labels, null, prior, "2026-12-01", before), prior, "flaky grant read: unchanged");
   const later = releaseGateCandidateReason(labels, null, prior, "2026-12-01", after);
-  assert.match(later, /\[not-before 2026-12-01 reached\]$/);
-  assert.equal(later.match(/not-before/g).length, 1, "one not-before part");
+  assert.match(later, /\[release-date-reached 2026-12-01\]$/);
+  assert.doesNotMatch(later, /not-before/);
+  assert.equal(later.match(/release-date-reached/g).length, 1, "one date part");
   assert.match(later, /\[grant: /, "grant part kept");
   assert.equal(releaseGateCandidateReason(labels, null, later, "2026-12-01", after), later, "reached is stable pass to pass");
   assert.equal(releaseGateCandidateReason(labels, null, prior, undefined, after), prior, "unreadable body keeps the prior part");
