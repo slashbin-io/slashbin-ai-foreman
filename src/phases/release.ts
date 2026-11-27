@@ -38,7 +38,7 @@ import type { Logger } from "../logger.js";
 import { emit, advance } from "../work-source.js";
 import type { Move } from "../lifecycle.js";
 import { roleFor } from "../plugins/registry.js";
-import type { DeployTrailer, IssueAcceptance, VerifyResult } from "../plugins/contract.js";
+import type { DeployTrailer, IssueAcceptance, VerifyResult, Unsticker } from "../plugins/contract.js";
 import { parseWaitUntil } from "../contract/result-v1.js";
 import { isUpstreamBlocked } from "../upstream-backoff.js";
 import { releaseIssues } from "../release-tracker.js";
@@ -50,7 +50,7 @@ import { epicChildClosedAlert, type UnstickKind } from "../unstick.js";
 import { verifyHoldPlan } from "./verify.js";
 import { followRelease } from "./promote.js";
 import { epicRefs, handoffSubject } from "../unstick.js";
-import { expireHeldRelease, holdExpiry } from "./verify-expiry.js";
+import { evidenceLinks, expireHeldRelease, holdExpiry } from "./verify-expiry.js";
 import { codeHost } from "../plugins/registry.js";
 import { report, resolve as resolveStall, stallClockEnabled, unresolvedStalls, type StallCause } from "../stall-clock.js";
 import { releaseTagName } from "../config-schema/github.js";
@@ -494,7 +494,42 @@ async function holdRelease(
     for (const n of await writable(repoConfig, rel, logger)) await comment(repoConfig, n, body, logger);
   }
   logger.warn(`Release PR #${rel.pr}: prod verification held (${v.hold}), attempt ${attempts}; re-verify at ${retryAt}`);
+  if (v.hold === "acceptance-failed") await notifyEmOwedStep(repoConfig, config, held, await writable(repoConfig, rel, logger), logger);
   return true;
+}
+
+/** A card body that names a step the EM owes after the deploy (`EM-owned`); the card's author writes it. */
+export const EM_OWED_STEP = /\bEM[- ]owned\b/i;
+
+/**
+ * A prod acceptance that failed on a card naming an EM-owned step: file the EM's follow-up now, on the first failure,
+ * not after the maximum hold age. The failure is the trigger, so the EM never has to remember the step. Idempotent
+ * (one card per hold origin; the EM's script finds it by marker), so each re-hold may call it and a failed filing is
+ * retried. Never throws.
+ */
+export async function notifyEmOwedStep(
+  repoConfig: RepoConfig, config: AgentConfig, held: ProdRelease, cards: readonly number[], logger: Logger,
+  readBody: (card: number) => Promise<string> = (n) => codeHost().readIssueBody(repoConfig, n),
+  plugin: Pick<Unsticker, "fileVerifyFollowUp"> | undefined = roleFor("unstick", config),
+): Promise<void> {
+  if (!plugin?.fileVerifyFollowUp) return;
+  for (const card of cards) {
+    try {
+      const body = await readBody(card);
+      if (!EM_OWED_STEP.test(body)) continue;
+      const label = repoConfig.epicRefLabel;
+      const res = await plugin.fileVerifyFollowUp(repoConfig, config, {
+        prNumber: held.pr, card, originatedAt: held.originatedAt ?? "", reason: held.hold ?? "", outcome: "failed",
+        verdict: `prod acceptance failed (${held.hold}) and the card names an EM-owned step`,
+        evidence: evidenceLinks(held.evidence), epic: label ? (epicRefs(body, label)[0] ?? null) : null,
+        owner: config.unstickEscalationOwner ?? "",
+      }, logger);
+      if (res.kind === "failed") logger.warn(`Release PR #${held.pr}: #${card} names an EM-owned step but its follow-up was not filed (${res.detail}); retried next hold`);
+      else logger.info(`Release PR #${held.pr}: #${card} EM-owned step follow-up ${res.kind}: ${res.url}`);
+    } catch (err) {
+      logger.warn(`Release PR #${held.pr}: could not check #${card} for an EM-owned step: ${errText(err)}`);
+    }
+  }
 }
 
 /** A STOP: the issues need a person. Blocked, with the reason on each; `release pending` stays. */
