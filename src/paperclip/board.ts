@@ -203,6 +203,15 @@ export function withStage(labelIds: readonly string[], stageLabelIds: ReadonlyMa
   return want ? [...kept, want] : kept;
 }
 
+/**
+ * A label's id by name (trimmed, any case), or null when the company has none. Read only: used for the
+ * operator-hold label (`operatorHoldLabel`), which the escalation that holds the card owns. Throws on failure.
+ */
+export async function findLabelByName(client: Pick<PaperclipClient, "listLabels">, name: string): Promise<string | null> {
+  const want = name.trim().toLowerCase();
+  return (await client.listLabels()).find((l) => String(l.name).trim().toLowerCase() === want)?.id ?? null;
+}
+
 type LabelClient = Pick<PaperclipClient, "listLabels" | "createLabel">;
 
 /** Each wanted label's id by name, creating the missing ones; a create that loses a race (409) lists again. */

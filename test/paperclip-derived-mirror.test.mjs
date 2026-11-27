@@ -307,3 +307,51 @@ test("foreman#198: the handoff names the unsigned issues of the release, or the 
 });
 
 const labelsOf = (fake, r) => (r.labelIds ?? []).map((id) => fake.labels.find((l) => l.id === id)?.name).filter((n) => n && n !== "issue");
+
+// EM#2088: an escalation holds a card for an operator's answer with a label (operatorHoldLabel) and NO unblock descriptor.
+// With nothing in the descriptor, the sync read the card as unheld and moved it out of Blocked under the ask.
+const EM_AGENT = "agent-em";
+const HOLD = { operatorHoldLabel: "Waiting on Owner" };
+const HOLD_LABELS = () => [...structuredClone(STAGE_LABELS), { id: "L-hold", name: " waiting on OWNER " }];
+const heldAsk = (labelIds = ["L-pv", "L-hold"]) => row7("blocked", { assigneeAgentId: EM_AGENT, unblockDescriptor: null, labelIds });
+const AT_GATE = [{ number: 7, labels: ["pr approved"] }];
+
+test("EM#2088: a Blocked card carrying the operator-hold label (no descriptor) stays Blocked through board sync; without the label it is moved", async () => {
+  const fake = fakePaperclip([heldAsk()], [], HOLD_LABELS());
+  const { mirror } = mirrorOn(fake, HOLD);
+  await onSnap(mirror, "example/r", snap(AT_GATE), logger());
+  await onSnap(mirror, "example/r", snap(AT_GATE), logger());
+  assert.equal(fake.rows[0].status, "blocked", "the label alone holds the card (name matched trimmed, any case)");
+  assert.equal(fake.rows[0].assigneeAgentId, EM_AGENT, "the asking seat keeps it");
+  assert.equal(statusPatches(fake).length, 0);
+  // The ask settled: the label is gone. A restarted mirror over that board places the card by GitHub again.
+  fake.rows[0].labelIds = ["L-pv"];
+  await onSnap(mirrorOn(fake, HOLD).mirror, "example/r", snap(AT_GATE), logger());
+  assert.notEqual(fake.rows[0].status, "blocked", "no label, no descriptor: nothing holds it");
+});
+
+test("EM#2088: a held card with a descriptor (a refused grant) still stands, label or not", async () => {
+  const REFUSED = { owner: { agentId: EM_AGENT }, action: "Grant refused: the work stays verified on develop until asked again." };
+  const fake = fakePaperclip([row7("blocked", { assigneeAgentId: EM_AGENT, unblockDescriptor: REFUSED, labelIds: ["L-pv"] })], [], HOLD_LABELS());
+  const { mirror } = mirrorOn(fake, HOLD);
+  await onSnap(mirror, "example/r", snap(AT_GATE), logger());
+  assert.equal(fake.rows[0].status, "blocked");
+  assert.equal(statusPatches(fake).length, 0);
+});
+
+test("EM#2088: the labels unread, a descriptor-less Blocked card is held (fail closed), and the hold reads again later", async () => {
+  const fake = fakePaperclip([heldAsk()], [], HOLD_LABELS());
+  const inner = fake.fetch;
+  let down = true;
+  fake.fetch = async (url, init = {}) => (down && (init.method ?? "GET") === "GET" && new URL(url).pathname === `/api/companies/${CID}/labels`
+    ? new Response("{}", { status: 503 }) : inner(url, init));
+  const { mirror } = mirrorOn(fake, HOLD);
+  await onSnap(mirror, "example/r", snap(AT_GATE), logger());
+  assert.equal(fake.rows[0].status, "blocked", "a failed label read never releases an ask");
+  down = false;
+  const placement = mirror.placement ?? mirror.snapshotSync?.placement;
+  if (placement) {
+    await placement.loadOperatorHoldLabel(Date.now() + 10 * 60_000);
+    assert.equal(placement.operatorHold("r7"), true, "after the retry window the label is read and the card still carries it");
+  }
+});

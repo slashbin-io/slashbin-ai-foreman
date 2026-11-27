@@ -66,6 +66,8 @@ export class SnapshotSync {
     }
     // This repo's cards unread: place nothing for it this pass; the next snapshot retries (other repos carry on).
     if (!(await this.index.ensureRepo(_repo))) return;
+    // Before any hold is weighed: a card waiting on an operator is held by its label alone (EM#2088).
+    if ([...this.index.rowState.values()].includes(`status:${this.env.statusName("blocked")}`)) await this.placement.loadOperatorHoldLabel();
     // A second card for an issue is retired in the pass that finds it, not left for housekeeping to reach.
     if (this.env.cfg.ownsCards === true) await this.index.retireDuplicates();
     const blocked = `status:${this.env.statusName("blocked")}`;
