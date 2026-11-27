@@ -87,6 +87,11 @@ export type ReviewFallback = {
    * (foreman#180).
    */
   unavailable?: true;
+  /**
+   * The unavailable cause is an empty response on the review POST: the write may or may not have landed.
+   * The core bounds this one defer (it spends `repoFailure.maxFailures` waits, then the ordinary failure path).
+   */
+  ambiguousPost?: true;
 };
 
 /** How a reviewer answered a promotion approval. */

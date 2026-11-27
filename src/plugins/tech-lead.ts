@@ -124,6 +124,14 @@ export async function reviewViaTechLead(
     logger.info(`Tech Lead PR #${prNumber}: ${reason} — deferred, not charged`);
     return { fallback: true, reason, unavailable: true };
   }
+  // An empty response on the review POST (gh: "unexpected end of JSON input"): the write is unconfirmed, never
+  // assumed landed. Re-offering is duplicate-safe (a run that finds its review on this sha only reports it), and
+  // the core bounds the retries, so this is the same tooling defer as a transport error.
+  if (out.code === 1 && isEmptyPostResponseError(out.stderr)) {
+    const reason = `empty response on the Tech Lead's GitHub review POST (exit 1, write unconfirmed): ${out.stderr.trim().slice(-200)}`;
+    logger.info(`Tech Lead PR #${prNumber}: ${reason} — deferred, not charged`);
+    return { fallback: true, reason, unavailable: true, ambiguousPost: true };
+  }
   if (out.code !== 0) {
     return { success: false, error: `Tech Lead review failed (exit ${out.code}): ${(out.stderr.trim() || out.stdout).trim().slice(-400)}` };
   }
@@ -139,6 +147,21 @@ export async function reviewViaTechLead(
   const summary = out.stdout.trim().slice(0, SUMMARY_DISPLAY_LIMIT);
   logger.info(`Tech Lead review of ${repoConfig.githubRepo} PR #${prNumber}: ${statusLine || "no-op"}`);
   return { success: true, summary, statusLine, trailers };
+}
+
+/**
+ * A GitHub POST that came back empty: `gh` could not decode the (absent) body, so the write may or may not have
+ * landed. The Tech Lead's `review-pr` retries reads only; this exact signature is a `gh api` call with
+ * `--method POST` / `-X POST` AND `unexpected end of JSON input` on one line. A bare parse error (a programming
+ * error), and any auth, 404, 422 or rate-limit text, is not it. Pure, exported for tests.
+ */
+export function isEmptyPostResponseError(stderr: string): boolean {
+  return stderr.split("\n").some((line) => {
+    const l = line.toLowerCase();
+    if (!l.includes("unexpected end of json input")) return false;
+    if (!/\bgh api\b/.test(l) || !/(--method[ =]post\b|-x post\b)/.test(l)) return false;
+    return !/\b(401|403|404|422)\b|bad credentials|forbidden|not found|validation failed|rate limit/.test(l);
+  });
 }
 
 /** A v1 reviewer result as the legacy review trailer. Pure, exported for tests. */
