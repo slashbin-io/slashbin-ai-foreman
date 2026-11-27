@@ -31,7 +31,7 @@ import type { UnstickOutcome, Unsticker } from "../plugins/contract.js";
 import { fieldTable, type IssueRecord, type IssueRecords, type RepoRecord } from "../issue-records.js";
 import { isUpstreamBlocked, reportRunResult, tryAcquire } from "../upstream-backoff.js";
 import { backoffDelay } from "../backoff.js";
-import { EVENT_KINDS, lifecycleOf, noticeHandled, noticeTaken, nextDecompose, decomposeInFlight, releaseGateCandidateReason, UNSTICK_MAX_ATTEMPTS, SPENT_QUESTION_REARM, handoffGiveUpComment, unstickGiveUpComment, derivedCandidates, nextStep, openEntry, unstickKey, type DecomposeCandidate, type UnstickCandidate, type UnstickEntry } from "../unstick.js";
+import { EVENT_KINDS, lifecycleOf, noticeHandled, noticeTaken, nextDecompose, decomposeInFlight, releaseGateCandidateReason, releaseNotBefore, UNSTICK_MAX_ATTEMPTS, SPENT_QUESTION_REARM, handoffGiveUpComment, unstickGiveUpComment, derivedCandidates, nextStep, openEntry, unstickKey, type DecomposeCandidate, type UnstickCandidate, type UnstickEntry } from "../unstick.js";
 import { asActiveRun } from "./common.js";
 import { report as reportStall, resolve as resolveStall, sweep as sweepStalls, unresolvedStalls, stallClockEnabled } from "../stall-clock.js";
 import { isDeployFailureHold, devVerifyHolding } from "./verify.js";
@@ -340,7 +340,11 @@ export async function tryUnstick(
           // One call per issue, in turn. No answer keeps the last reason, so a flaky read is not a new question.
           const grantState = unsticker.grantState ? await unsticker.grantState(repoConfig, config, i.number, log) : null;
           const prior = loaded.records.get(i.number)?.unstick?.[unstickKey(i.number, "release-gate")];
-          const reason = releaseGateCandidateReason(names, grantState, prior?.reason);
+          // `**Release not before:** YYYY-MM-DD` in the issue body holds the release until that UTC date; the reason carries it
+          // while ahead, so the date arriving re-calls the gate. Unreadable body: undefined keeps the prior reason's part.
+          let notBefore: string | null | undefined;
+          try { notBefore = releaseNotBefore(await codeHost().readIssueBody(repoConfig, i.number)); } catch { notBefore = undefined; }
+          const reason = releaseGateCandidateReason(names, grantState, prior?.reason, notBefore);
           candidates.push({ issue: i.number, kind: "release-gate", reason });
         }
       }
