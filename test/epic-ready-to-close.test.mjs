@@ -28,6 +28,8 @@ test("epic-ready-to-close is an unstick kind, and an epic is read from the Refer
   assert.deepEqual(epicRefs("follow-up to #1538", LABEL), []);
   // A dependency epic named in Preconditions and References is not the parent.
   assert.deepEqual(epicRefs("**Preconditions:** none. engineering-manager #88 (theme dependency, not a child of it) is met.\n## References\n- engineering-manager #93\n- engineering-manager #88 (theme dependency, met; not a child of it)", LABEL), [93]);
+  assert.deepEqual(epicRefs("Blocked-by: engineering-manager #88\n## References\n- engineering-manager #93", LABEL), [93]);
+  assert.deepEqual(epicRefs("blocked by engineering-manager #88", LABEL), []);
 });
 
 test("no epicRefLabel: no epic is parsed from any body", () => {
