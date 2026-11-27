@@ -2769,12 +2769,18 @@ test("predeploy-stop: removing blocked from one named issue releases the stop on
 test("predeploy-stop: a blocked outside the record is never lifted, and holds the release (#347)", async () => {
   stopWorld3(true);
   await run();
-  const st = gh(); st.issues[8] = issue(8, "blocked"); writeFileSync(GH_STATE, JSON.stringify(st));
-  withEvents({ ...FOREMAN_LABELS3, 8: [{ label: "blocked", by: "a-person" }] });
+  // D: signed off (`release pending`), and stopped by the Foreman itself (its own stop comment and label event), so
+  // `blockedByPerson` is false for it and only the outside-the-record check can keep it from being lifted.
+  const st = gh(); st.issues[8] = issue(8, "release pending", "blocked");
+  st.comments[8] = [{ url: "https://github.com/x/y/issues/8#issuecomment-99", body: "**Release stopped: needs a person.** earlier stop", at: new Date().toISOString(), by: "foreman-bot" }];
+  writeFileSync(GH_STATE, JSON.stringify(st));
+  withEvents({ ...FOREMAN_LABELS3, 8: [{ label: "blocked", by: "foreman-bot" }] });
   unblock(5);
   rt = withFreshMemory(rt);
   assert.equal(await run(2), false, "D is not in the record");
-  assert.equal(agentCalls().length, 2);
+  // Past the sign-off gate and not a person's block: the outside-the-record check is the only thing that holds it.
+  // Without it the stop is re-asked at once (A was released) and the SRE is called a third and fourth time.
+  assert.equal(agentCalls().length, 2, "the pre-deploy stop was not re-asked");
   assert.ok(gh().issues[8].labels.includes("blocked"), "D is untouched");
   assert.ok(gh().issues[6].labels.includes("blocked") && gh().issues[7].labels.includes("blocked"), "nothing else was lifted");
 });
