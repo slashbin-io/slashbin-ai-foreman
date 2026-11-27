@@ -114,6 +114,14 @@ export async function reviewViaTechLead(
     return githubDown ? { fallback: true, reason, unavailable: true } : { fallback: true, reason };
   }
   if (out.timedOut) return { success: false, error: "Tech Lead review timed out" };
+  // An empty response on the review POST (gh: "unexpected end of JSON input"): the write is unconfirmed, never
+  // assumed landed. Re-offering is duplicate-safe (a run that finds its review on this sha only reports it), and
+  // the core bounds the retries, so this is the same tooling defer as a transport error.
+  if (out.code === 1 && isEmptyPostResponseError(out.stderr)) {
+    const reason = `empty response on the Tech Lead's GitHub review POST (exit 1, write unconfirmed): ${out.stderr.trim().slice(-200)}`;
+    logger.info(`Tech Lead PR #${prNumber}: ${reason} — deferred, not charged`);
+    return { fallback: true, reason, unavailable: true, ambiguousPost: true };
+  }
   // A transient GitHub error inside the Tech Lead (`gh pr view` hit a TLS handshake timeout, 2026-11-02,
   // foreman#180) is a network blip, not a failed review. The Tech Lead retries its own reads and exits 3
   // when GitHub stays down; this is the same answer for a build that does not, or a failure it did not
@@ -123,14 +131,6 @@ export async function reviewViaTechLead(
     const reason = `GitHub transport error inside the Tech Lead (exit ${out.code}): ${out.stderr.trim().slice(-200)}`;
     logger.info(`Tech Lead PR #${prNumber}: ${reason} — deferred, not charged`);
     return { fallback: true, reason, unavailable: true };
-  }
-  // An empty response on the review POST (gh: "unexpected end of JSON input"): the write is unconfirmed, never
-  // assumed landed. Re-offering is duplicate-safe (a run that finds its review on this sha only reports it), and
-  // the core bounds the retries, so this is the same tooling defer as a transport error.
-  if (out.code === 1 && isEmptyPostResponseError(out.stderr)) {
-    const reason = `empty response on the Tech Lead's GitHub review POST (exit 1, write unconfirmed): ${out.stderr.trim().slice(-200)}`;
-    logger.info(`Tech Lead PR #${prNumber}: ${reason} — deferred, not charged`);
-    return { fallback: true, reason, unavailable: true, ambiguousPost: true };
   }
   if (out.code !== 0) {
     return { success: false, error: `Tech Lead review failed (exit ${out.code}): ${(out.stderr.trim() || out.stdout).trim().slice(-400)}` };
@@ -160,7 +160,7 @@ export function isEmptyPostResponseError(stderr: string): boolean {
     const l = line.toLowerCase();
     if (!l.includes("unexpected end of json input")) return false;
     if (!/\bgh api\b/.test(l) || !/(--method[ =]post\b|-x post\b)/.test(l)) return false;
-    return !/\b(401|403|404|422)\b|bad credentials|forbidden|not found|validation failed|rate limit/.test(l);
+    return !/\bhttp[ :]*(401|403|404|422|429)\b|bad credentials|forbidden|not found|validation failed|rate limit|too many requests/.test(l);
   });
 }
 

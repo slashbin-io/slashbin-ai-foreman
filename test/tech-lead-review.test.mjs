@@ -140,6 +140,7 @@ test("a bare JSON parse error, a GET, auth, 404, 422 and rate-limit are not the 
     "review-pr failed: gh api --method POST repos/o/r: HTTP 422: Validation Failed",
     "review-pr failed: gh api --method POST repos/o/r: API rate limit exceeded",
     "review-pr failed: gh api --method POST repos/o/r: HTTP 403 rate limit; unexpected end of JSON input",
+    "review-pr failed: gh api --method POST repos/o/r/pulls/7/x: HTTP 429: unexpected end of JSON input",
   ]) {
     assert.equal(isEmptyPostResponseError(line), false, line);
     const cfg = fakeTechLead(`console.error(${JSON.stringify(line)}); process.exit(1);`);
@@ -148,4 +149,12 @@ test("a bare JSON parse error, a GET, auth, 404, 422 and rate-limit are not the 
     assert.equal(r.success, false, line);
   }
   assert.equal(isEmptyPostResponseError(POST), true);
+});
+
+test("a POST path with a refusal-looking number is still the empty-POST signature; with ECONNRESET it still carries ambiguousPost", async () => {
+  for (const n of [401, 403, 404, 422]) assert.equal(isEmptyPostResponseError(`review-pr failed: gh api --method POST repos/o/r/pulls/${n}/x: unexpected end of JSON input`), true, String(n));
+  const cfg = fakeTechLead(`console.error(${JSON.stringify(POST + "; ECONNRESET")}); process.exit(1);`);
+  const r = await reviewViaTechLead(repo, cfg, 7, logger);
+  assert.equal(r.ambiguousPost, true);
+  assert.equal(r.unavailable, true);
 });
