@@ -284,6 +284,18 @@ export function unlinkedFixes(holder: number, candidates: readonly number[], rel
   });
 }
 
+/**
+ * Whether the `unlinked-fix` question on `item` about `holder` still has its premise (slashbin-ai-foreman#397): `holder`
+ * is still the held verification (`held`; undefined when this daemon has not seen the hold this run, which proves
+ * nothing) and `item` still mentions it without correcting it (`relation`; undefined when unread, which also proves
+ * nothing). Only a premise known to be false returns false, so an unreadable fact keeps the question. Pure, exported for tests.
+ */
+export function unlinkedFixPremise(holder: number, held: number | null | undefined, relation: Relation | undefined): boolean {
+  if (held !== undefined && held !== holder) return false;
+  if (relation === undefined) return true;
+  return relation.mentions.includes(holder) && !relation.corrects.includes(holder);
+}
+
 /** The evidence links (comment and image URLs) in the SRE's or QA's output, distinct, in order, at most `max`. Pure, exported for tests. */
 export function evidenceLinks(summary: string, max = 8): string[] {
   const urls = summary.match(/https?:\/\/[^\s<>()"'`\]\[]+/g) ?? [];

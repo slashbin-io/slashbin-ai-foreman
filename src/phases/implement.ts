@@ -204,7 +204,7 @@ export function unlinkedFixComment(held: number): string {
  * queue, because its dev verification waits on them. The relation is the code host's (`relationsOf`); the core never
  * reads a title. Unreadable, nothing is a fix and the queue builds in order. When nothing corrects it and
  * `verifying` holds the queue, each candidate that only mentions it is raised once to the EM as `unlinked-fix` (one
- * per item and holder, standing until the item closes) and told once on the issue. The Foreman never adds the link:
+ * per item and holder, standing until the item closes or its premise fails, `withdrawStaleUnlinkedFixes`) and told once on the issue. The Foreman never adds the link:
  * a guess is not a fact.
  */
 export async function fixesForHold(
@@ -615,6 +615,8 @@ export async function tryBatchImplementation(
     return {};
   });
   const verifying = devVerifyHolding(holding, verifyHolds, config.backoff.verifyRetry.maxAttempts, fieldTable(mergedRecords, "stalls"), checkDefects);
+  // The unstick pass withdraws an `unlinked-fix` question once its holder is no longer this (slashbin-ai-foreman#397).
+  if (featurePr) rt.memory.heldVerification.delete(repoName); else rt.memory.heldVerification.set(repoName, verifying);
   // The fix a failed verification asks for corrects it (linked to it).
   // Queued behind that verification, it waited out every retry, each bound to
   // fail without it (console#1340 behind #1338, 32 min, 2026-10-20).
