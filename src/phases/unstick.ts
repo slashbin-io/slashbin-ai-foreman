@@ -28,13 +28,14 @@ import type { AgentConfig, RepoConfig } from "../config.js";
 import type { Logger } from "../logger.js";
 import { roleFor } from "../plugins/registry.js";
 import type { UnstickOutcome, Unsticker } from "../plugins/contract.js";
-import { fieldTable, type IssueRecord, type RepoRecord } from "../issue-records.js";
+import { fieldTable, type IssueRecord, type IssueRecords, type RepoRecord } from "../issue-records.js";
 import { isUpstreamBlocked, reportRunResult, tryAcquire } from "../upstream-backoff.js";
 import { backoffDelay } from "../backoff.js";
 import { EVENT_KINDS, lifecycleOf, noticeHandled, noticeTaken, nextDecompose, decomposeInFlight, releaseGateCandidateReason, UNSTICK_MAX_ATTEMPTS, SPENT_QUESTION_REARM, handoffGiveUpComment, unstickGiveUpComment, derivedCandidates, nextStep, openEntry, unstickKey, type DecomposeCandidate, type UnstickCandidate, type UnstickEntry } from "../unstick.js";
 import { asActiveRun } from "./common.js";
 import { report as reportStall, resolve as resolveStall, sweep as sweepStalls, unresolvedStalls, stallClockEnabled } from "../stall-clock.js";
-import { isDeployFailureHold, unlinkedFixPremise } from "./verify.js";
+import { isDeployFailureHold, devVerifyHolding } from "./verify.js";
+import { unlinkedFixPremise } from "./implement.js";
 import { codeHost } from "../plugins/registry.js";
 import type { CodeHost } from "../code-host.js";
 import type { ForemanRuntime } from "../runtime.js";
@@ -95,7 +96,8 @@ export function applyOutcome(cur: UnstickEntry, o: UnstickOutcome, nowMs: number
   const { refusals: _r, ...clean } = rest;
   // A recall the EM declines as already answered: the handoff stands and the watch goes on (a decline is final
   // only for a question never handed off). `recalls` is set exactly while a handoff is being watched.
-  if (o.kind === "declined" && handedOff !== undefined) {
+  // An unlinked-fix decline is final whenever it comes: its answer is "not the fix", never "already answered" (slashbin-ai-foreman#397).
+  if (o.kind === "declined" && handedOff !== undefined && cur.kind !== "unlinked-fix") {
     return { ...clean, status: "invoked", attempts: cur.attempts + 1, lastCallAt: at, recalls: handedOff + 1, ...(o.detail ? { detail: o.detail.slice(0, 500) } : {}) };
   }
   // `recalls` starts at 0 with the first handoff; every later handoff for the same reason is a recall.
@@ -235,7 +237,7 @@ async function reportGiveUp(rt: ForemanRuntime, repoConfig: RepoConfig, config: 
  * stood until its item closed, and the EM was asked, then a `handoff-gave-up` stall opened, on something nobody could
  * truthfully answer. Never raises anything: a fact that cannot be read keeps the question.
  */
-async function withdrawStaleUnlinkedFixes(rt: ForemanRuntime, repoConfig: RepoConfig, loaded: { records: ReadonlyMap<number, IssueRecord> }, log: Logger): Promise<void> {
+async function withdrawStaleUnlinkedFixes(rt: ForemanRuntime, repoConfig: RepoConfig, config: AgentConfig, issues: Awaited<ReturnType<CodeHost["getOpenIssues"]>> | null, loaded: IssueRecords, log: Logger): Promise<void> {
   const standing: Array<{ n: number; key: string; holder: number }> = [];
   for (const [n, r] of loaded.records) {
     for (const [key, e] of Object.entries(r.unstick ?? {})) {
@@ -250,7 +252,12 @@ async function withdrawStaleUnlinkedFixes(rt: ForemanRuntime, repoConfig: RepoCo
   } catch (err) {
     log.warn(`unlinked-fix premises: relations not read (${(err instanceof Error ? err.message : String(err)).split("\n")[0]}); only the hold is checked`);
   }
-  const held = rt.memory.heldVerification.get(repoConfig.name);
+  // The held verification, read afresh from the board and the records, so it does not wait on a build pass that may not run:
+  // the merged open issues, as implement reads them (`devVerifyHolding`). Unreadable board: unknown, the question stays.
+  // A check-defect release or a switch-off is left out, which only keeps a question that implement would already have dropped.
+  const held = issues
+    ? devVerifyHolding(issues.filter((i) => codeHost().hasLabel(i, repoConfig.lifecycleLabels.prMerged)).map((i) => i.number), fieldTable(loaded, "verifyHeld"), config.backoff.verifyRetry.maxAttempts, fieldTable(loaded, "stalls"))
+    : undefined;
   for (const { n, key, holder } of standing) {
     if (unlinkedFixPremise(holder, held, relations.get(n))) continue;
     if (!await mutate(rt, repoConfig, n, (table) => { delete table[key]; })) continue;
@@ -302,7 +309,7 @@ export async function tryUnstick(
     const loaded = await rt.records.loadIssueRecords(repoConfig, new Set(open ?? []));
     // The epics' own records: their `stalled` questions are delivered from here, to the epic's repo and number.
     const epicLoaded = home && epics.length > 0 ? await rt.records.loadIssueRecords(home, new Set(epics)) : null;
-    await withdrawStaleUnlinkedFixes(rt, repoConfig, loaded, log);
+    await withdrawStaleUnlinkedFixes(rt, repoConfig, config, issues, loaded, log);
     const homeOf = new Map<UnstickCandidate, RepoConfig>();
     const epicCandidates: UnstickCandidate[] = [];
     for (const r of epicLoaded?.records.values() ?? []) {

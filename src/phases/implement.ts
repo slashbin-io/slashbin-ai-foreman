@@ -4,7 +4,7 @@
 import type { AgentConfig, RepoConfig } from "../config.js";
 import { roleFor } from "../plugins/registry.js";
 import type { Logger } from "../logger.js";
-import type { SessionEvent, SessionReport } from "../adapters.js";
+import type { Relation, SessionEvent, SessionReport } from "../adapters.js";
 import { selectWork, heldWork, emit, advance, wantsSessionReports, workSourceFor } from "../work-source.js";
 import { isApprovedUnbuilt } from "../lifecycle.js";
 import { implementApprovedIssues } from "./implement-workflow.js";
@@ -200,11 +200,23 @@ export function unlinkedFixComment(held: number): string {
 }
 
 /**
+ * Whether the `unlinked-fix` question on `item` about `holder` still has its premise (slashbin-ai-foreman#397): `holder`
+ * is still the held verification (`held`; undefined when unknown, which proves
+ * nothing) and the item still mentions it without correcting it (`relation`; undefined when unread, which also proves
+ * nothing). Only a premise known to be false returns false, so an unreadable fact keeps the question. Pure, exported for tests.
+ */
+export function unlinkedFixPremise(holder: number, held: number | null | undefined, relation: Relation | undefined): boolean {
+  if (held !== undefined && held !== holder) return false;
+  if (relation === undefined) return true;
+  return relation.mentions.includes(holder) && !relation.corrects.includes(holder);
+}
+
+/**
  * The build-first check (slashbin-ai-foreman#267): the `candidates` that correct `holder` build now, ahead of the
  * queue, because its dev verification waits on them. The relation is the code host's (`relationsOf`); the core never
  * reads a title. Unreadable, nothing is a fix and the queue builds in order. When nothing corrects it and
  * `verifying` holds the queue, each candidate that only mentions it is raised once to the EM as `unlinked-fix` (one
- * per item and holder, standing until the item closes or its premise fails, `withdrawStaleUnlinkedFixes`) and told once on the issue. The Foreman never adds the link:
+ * per item and holder, standing until the item closes or its premise fails, `withdrawStaleUnlinkedFixes` in the unstick pass) and told once on the issue. The Foreman never adds the link:
  * a guess is not a fact.
  */
 export async function fixesForHold(
@@ -220,6 +232,7 @@ export async function fixesForHold(
   const fixes = correctionsToBuild(holder, candidates, relations);
   if (fixes.length > 0 || verifying !== holder) return fixes;
   for (const n of unlinkedFixes(holder, candidates, relations)) {
+    if (!unlinkedFixPremise(holder, verifying, relations.get(n))) continue;
     const reason = `#${n} looks like the fix for #${holder}, whose dev verification is held: its body mentions #${holder}, but #${holder} is not blocked by it and it is not a sub-issue of #${holder}, so it queues behind #${holder}.`;
     let fresh: boolean;
     try {
@@ -615,8 +628,6 @@ export async function tryBatchImplementation(
     return {};
   });
   const verifying = devVerifyHolding(holding, verifyHolds, config.backoff.verifyRetry.maxAttempts, fieldTable(mergedRecords, "stalls"), checkDefects);
-  // The unstick pass withdraws an `unlinked-fix` question once its holder is no longer this (slashbin-ai-foreman#397).
-  if (featurePr) rt.memory.heldVerification.delete(repoName); else rt.memory.heldVerification.set(repoName, verifying);
   // The fix a failed verification asks for corrects it (linked to it).
   // Queued behind that verification, it waited out every retry, each bound to
   // fail without it (console#1340 behind #1338, 32 min, 2026-10-20).

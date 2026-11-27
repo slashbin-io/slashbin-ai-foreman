@@ -26,12 +26,6 @@ export class PhaseMemory {
   /** `<pr>:<head>:<issue>` already blocked for waiting behind an orphan PR whose review asked for changes (foreman#135). */
   readonly orphanBlocked = new Set<string>();
   readonly queuedBehind = new Map<string, Map<number, string>>();
-  /**
-   * Per repo, the issue whose dev verification held the build queue on the last implement pass that could tell (null: none).
-   * Absent when it could not (a feature PR open, so the queue was not read). The unstick pass withdraws an `unlinked-fix`
-   * question whose holder is not this one (slashbin-ai-foreman#397).
-   */
-  readonly heldVerification = new Map<string, number | null>();
   /** `phase:owner/repo#pr` already logged as paused by the blocked label, so a standing hold logs once. */
   readonly blockedPauseNoted = new Set<string>();
 
