@@ -54,6 +54,17 @@ export class PaperclipPlugin implements ForemanPlugin {
   /** The repos the card-block store writes to; the latest config's. */
   private repos: readonly RepoConfig[] = [];
 
+  private readonly identities = new Map<string, ReturnType<typeof createRepoIdentity>>();
+  /** The registry's process mode for a repo. Not cached: a mode change is read on the next pass. */
+  async repoProcessMode(config: AgentConfig, githubRepo: string): Promise<string | null> {
+    const { registryUrl, registryApiKey } = config.paperclip ?? {};
+    if (!registryUrl) throw new Error("no registry configured (paperclip.registryUrl)");
+    const key = `${registryUrl}\n${registryApiKey ?? ""}`;
+    let id = this.identities.get(key);
+    if (!id) this.identities.set(key, (id = createRepoIdentity({ url: registryUrl, apiKey: registryApiKey })));
+    return (await id.policyOf(githubRepo)).processMode;
+  }
+
   get observer(): PaperclipMirror | undefined {
     return this.mirror ?? undefined;
   }

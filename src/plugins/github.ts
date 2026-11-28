@@ -21,6 +21,7 @@ import * as reports from "../github/reports.js";
 import * as reviewQueue from "../github/review-queue.js";
 import { BackoffTracker } from "../backoff.js";
 import * as reviewFreshness from "../github/review-freshness.js";
+import * as reviewIntakeReads from "../github/review-intake-reads.js";
 import * as skipHold from "../github/skip-hold.js";
 import * as coreReads from "../github/core-reads.js";
 import * as corrections from "../github/corrections.js";
@@ -183,6 +184,9 @@ export function githubCodeHost(
     readPrState: reviewFreshness.readPrState,
     readPrStanding: reviewFreshness.readPrStanding,
     hasPendingRevisions: reviewQueue.hasPendingRevisions,
+    listOpenPrHeads: reviewIntakeReads.listOpenPrHeads,
+    readHeadStatus: reviewIntakeReads.readHeadStatus,
+    requiresStatusCheck: reviewIntakeReads.requiresStatusCheck,
     escalatedReason: skipHold.escalatedReason,
     foremanLogin: async (cwd) => await identity.login(cwd),
     heldReason: skipHold.heldReason,

@@ -156,6 +156,12 @@ export function roleFor<R extends AgentRole>(role: R, config: AgentConfig): NonN
   return undefined;
 }
 
+/** The registry's process mode for a repo, from the first started plugin that can read it; throws when none can. */
+export async function repoProcessMode(config: AgentConfig, githubRepo: string): Promise<string | null> {
+  for (const p of started) if (p.repoProcessMode && p.enabled(config)) return p.repoProcessMode(config, githubRepo);
+  throw new Error("no enabled plugin reads the registry");
+}
+
 /** The change signal of the first started plugin that fills the role, or undefined: then every repo is polled as always. */
 export function changeSignal(): ChangeSignal | undefined {
   return pluginsFor("changeSignal").find((p) => p.changeSignal)?.changeSignal;

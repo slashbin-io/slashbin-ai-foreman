@@ -161,16 +161,21 @@ export async function runLanePass(
   rt: ForemanRuntime,
   repoConfig: RepoConfig,
   config: AgentConfig,
-  lane: Lane,
+  laneIn: Lane,
   logger: Logger,
   snapshot: SnapshotPolicy = "always",
 ): Promise<RepoCycleResult> {
   // A sync-only (human-lane) repo runs the skill-deliver stage and nothing else; every other repo never runs it.
   // Checked first: no onboarding (it would create labels), no records import, no board snapshot for a human repo.
+  // The exception is the review lane: a sync-only repo admits it, and `tryReview` runs only the review intake there.
+  let lane = laneIn;
   const delivers = lane.stages.some((s) => !isCustomStage(s) && s.type === "skill-deliver");
-  if (!!repoConfig.syncOnly !== delivers) return { processed: 0, lastImplementation: null, events: [] };
+  const reviews = lane.stages.some((s) => !isCustomStage(s) && s.type === "review");
+  if (!!repoConfig.syncOnly !== delivers && !(repoConfig.syncOnly && reviews)) return { processed: 0, lastImplementation: null, events: [] };
   // No lane runs on a repo before it is onboarded: its labels exist (onboarding.ts).
   // A sync-only repo skips onboarding and the records import: both write (labels, records) and delivery must not depend on them.
+  // On a sync-only repo the review lane is the intake alone: no custom stage that gates it runs there.
+  if (repoConfig.syncOnly && reviews && !delivers) lane = { ...lane, stages: lane.stages.filter((s) => !isCustomStage(s)) };
   if (!repoConfig.syncOnly) {
     if (config.onboarding && !(await rt.onboarding.onboardRepo(repoConfig, logger))) return { processed: 0, lastImplementation: null, events: [] };
     // The legacy per-issue entries of `.agent-state.json` move into the record store once, before any lane reads a record.
