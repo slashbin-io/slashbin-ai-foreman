@@ -58,6 +58,7 @@ export interface PlacementPort {
   persistBlock(id: string): void;
   clearBlock(id: string): void;
   externalHold(id: string): boolean;
+  loadOperatorHoldLabel(now?: number): Promise<void>;
   holdStandsAt(id: string, stage: PaperclipStage | "done"): Promise<boolean>;
   holdOutranks(id: string, stage: PaperclipStage): boolean;
   rulingPending(id: string, stage: PaperclipStage): boolean;

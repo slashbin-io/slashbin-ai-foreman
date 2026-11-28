@@ -6,7 +6,7 @@
 // stage labels. It owns those blocks and the label ids. The card index's state
 // and the session holds reach it by constructor injection, never by import.
 
-import { customerLabelsOf, ensureCustomerLabels, ensureIssueLabel, ensureStageLabels, FOREMAN_BLOCKED_PREFIX, NO_CUSTOMER_LABEL, SESSION_STAGE, stageTarget, withCustomerLabels, withIssueLabel, withStage, type PaperclipBucket } from "./board.js";
+import { customerLabelsOf, ensureCustomerLabels, ensureIssueLabel, ensureStageLabels, findLabelByName, FOREMAN_BLOCKED_PREFIX, NO_CUSTOMER_LABEL, SESSION_STAGE, stageTarget, withCustomerLabels, withIssueLabel, withStage, type PaperclipBucket } from "./board.js";
 import type { PaperclipStage } from "./config.js";
 import type { PaperclipEnv } from "./env.js";
 import type { IndexPort } from "./ports.js";
@@ -16,6 +16,9 @@ import {
 } from "./steps.js";
 
 type Bucket = PaperclipBucket;
+
+/** How long an absent or unread operator-hold label is trusted before it is looked up again. */
+export const HOLD_LABEL_RETRY_MS = 5 * 60_000;
 
 export class Placement {
   /** Task id → the last lifecycle stage the mirror placed it in, so a resumed card goes back there. */
@@ -58,6 +61,12 @@ export class Placement {
   private customerWarned: unknown;
   /** The company's `issue` label id, once ensured (undefined until a label write needed it). */
   private issueLabelId: string | undefined;
+  /**
+   * The operator-hold label's id (`operatorHoldLabel`): a string, null (unset, or the company has none), "unread"
+   * (the lookup failed: every descriptor-less Blocked card is held, fail closed) or undefined (not looked up yet).
+   */
+  private holdLabel: string | null | "unread" | undefined;
+  private holdLabelAt = 0;
   /** Cards confirmed to carry the issue label, so a sync reads and writes each once. */
   private readonly issueLabelled = new Set<string>();
 
@@ -75,6 +84,32 @@ export class Placement {
     this.stageLabelIds = null;
     this.customerLabelIds = null;
     this.issueLabelId = undefined;
+    this.holdLabel = undefined;
+  }
+
+  /**
+   * Look up the operator-hold label before holds are weighed. A found id is kept; an absent label or a failed
+   * read is asked again after HOLD_LABEL_RETRY_MS, so a label made later (the escalation refuses an ask without
+   * it) is seen without a restart.
+   */
+  async loadOperatorHoldLabel(now = Date.now()): Promise<void> {
+    if (typeof this.holdLabel === "string" && this.holdLabel !== "unread") return;
+    if (this.holdLabel !== undefined && now - this.holdLabelAt < HOLD_LABEL_RETRY_MS) return;
+    const name = this.env.cfg.operatorHoldLabel;
+    if (!name) { this.holdLabel = null; this.holdLabelAt = now; return; }
+    const r = await this.env.safeCall("read labels", () => findLabelByName(this.env.client, name));
+    this.holdLabel = r.ok ? r.value : "unread";
+    this.holdLabelAt = now;
+  }
+
+  /**
+   * True when a Blocked card waits on an operator's answer: it carries the operator-hold label, which the escalation
+   * leaves with no unblock descriptor. With the label unread, a descriptor-less Blocked card is held (fail closed).
+   */
+  operatorHold(id: string): boolean {
+    if (this.holdLabel === "unread") return !this.index.blockAction.has(id);
+    if (typeof this.holdLabel !== "string") return false;
+    return this.index.rowContent.get(id)?.labelIds?.includes(this.holdLabel) === true;
   }
 
   /**
@@ -164,10 +199,20 @@ export class Placement {
    */
   externalHold(id: string): boolean {
     if (this.index.rowState.get(id) !== `status:${this.env.statusName("blocked")}`) return false;
+    // A card waiting on an operator carries no descriptor; its label is the hold (EM#2088). It ends when the label goes.
+    if (this.operatorHold(id)) return true;
     const action = this.index.blockAction.get(id);
     if (action === undefined) return false;
     if (action.startsWith(ESCALATION_ACTION_PREFIX)) return true;
     return !action.startsWith(FOREMAN_BLOCKED_PREFIX) && !RECEIVER_HOLD_ENTRY.test(action);
+  }
+
+  /**
+   * True when a Blocked card waits on an operator's answer. Unlike a seat's hold, which GitHub moving on releases, this
+   * one is not tied to a stage: the card keeps its status and holder at every stage until the label is removed.
+   */
+  private waitsOnOperator(id: string): boolean {
+    return this.index.rowState.get(id) === `status:${this.env.statusName("blocked")}` && this.operatorHold(id);
   }
 
   /**
@@ -179,6 +224,7 @@ export class Placement {
    */
   holdOutranks(id: string, stage: PaperclipStage): boolean {
     if (this.rulingHeld.has(id) && this.blockedAt.get(id) === stage) return true;
+    if (this.waitsOnOperator(id)) return true;
     return this.externalHold(id) && (this.escalatedAt.get(id) ?? this.ghStage.get(id)) === stage;
   }
 
@@ -192,9 +238,13 @@ export class Placement {
    */
   async holdOutranksLive(id: string, stage: PaperclipStage): Promise<boolean> {
     const gh = this.ghStage.get(id);
-    if (gh === undefined || gh === stage) {
+    // An operator hold outranks every stage, so a cached one is confirmed live: the label may have come off since.
+    const sameStage = gh === undefined || gh === stage;
+    if (sameStage || this.waitsOnOperator(id)) {
       await this.index.refreshRow(id);
-      if (this.externalHold(id) && !this.escalatedAt.has(id)) {
+      // Only a Blocked card can be waiting on an operator: no other card costs a label read.
+      if (this.index.rowState.get(id) === `status:${this.env.statusName("blocked")}`) await this.loadOperatorHoldLabel();
+      if (sameStage && this.externalHold(id) && !this.escalatedAt.has(id)) {
         const at = gh ?? stage;
         // Anchored by the card's own stage label: a hold from an earlier stage is not this one's.
         const placed = await this.placedLabel(id);
@@ -405,6 +455,8 @@ export class Placement {
    * label to read falls back to the stage this process first saw it hold at.
    */
   async holdStandsAt(id: string, stage: PaperclipStage | "done"): Promise<boolean> {
+    // A card waiting on an operator stays put at every stage until the label comes off; a close still releases it.
+    if (stage !== "done" && this.waitsOnOperator(id)) return true;
     const placed = await this.placedLabel(id);
     if (placed) {
       const want = stage === "done" ? null : stageTarget(this.env.cfg, stage).label;

@@ -135,6 +135,10 @@ export const paperclipConfigSchema = z.object({
   companyId: z.string().min(1).optional(),
   // The name the Foreman registers under, and finds itself by, in Paperclip.
   agentName: z.string().min(1).default("Foreman"),
+  // The label an escalation puts on a Blocked card it holds for a person's answer, with no unblock descriptor.
+  // A Blocked card carrying it (matched trimmed, any case) stays Blocked whatever GitHub says; the label is read,
+  // never created. Set it in the installed `.ai-agent.json`. Unset = no such hold.
+  operatorHoldLabel: z.string().min(1).optional(),
   // The Foreman's Paperclip agent id, once registered.
   agentId: z.string().min(1).optional(),
   // The bearer credential sent as `authorization: Bearer` on every request, for an
