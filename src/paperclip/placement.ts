@@ -208,6 +208,14 @@ export class Placement {
   }
 
   /**
+   * True when a Blocked card waits on an operator's answer. Unlike a seat's hold, which GitHub moving on releases, this
+   * one is not tied to a stage: the card keeps its status and holder at every stage until the label is removed.
+   */
+  private waitsOnOperator(id: string): boolean {
+    return this.index.rowState.get(id) === `status:${this.env.statusName("blocked")}` && this.operatorHold(id);
+  }
+
+  /**
    * True when a hold on `id` outranks a stage update to `stage`: a needs-ruling
    * block made at that stage (the review's "changes requested" landing after
    * the escalation took SLA-366 back to the Foreman, Foreman #109), or another
@@ -216,6 +224,7 @@ export class Placement {
    */
   holdOutranks(id: string, stage: PaperclipStage): boolean {
     if (this.rulingHeld.has(id) && this.blockedAt.get(id) === stage) return true;
+    if (this.waitsOnOperator(id)) return true;
     return this.externalHold(id) && (this.escalatedAt.get(id) ?? this.ghStage.get(id)) === stage;
   }
 
@@ -229,11 +238,13 @@ export class Placement {
    */
   async holdOutranksLive(id: string, stage: PaperclipStage): Promise<boolean> {
     const gh = this.ghStage.get(id);
-    if (gh === undefined || gh === stage) {
+    // An operator hold outranks every stage, so a cached one is confirmed live: the label may have come off since.
+    const sameStage = gh === undefined || gh === stage;
+    if (sameStage || this.waitsOnOperator(id)) {
       await this.index.refreshRow(id);
       // Only a Blocked card can be waiting on an operator: no other card costs a label read.
       if (this.index.rowState.get(id) === `status:${this.env.statusName("blocked")}`) await this.loadOperatorHoldLabel();
-      if (this.externalHold(id) && !this.escalatedAt.has(id)) {
+      if (sameStage && this.externalHold(id) && !this.escalatedAt.has(id)) {
         const at = gh ?? stage;
         // Anchored by the card's own stage label: a hold from an earlier stage is not this one's.
         const placed = await this.placedLabel(id);
@@ -444,6 +455,8 @@ export class Placement {
    * label to read falls back to the stage this process first saw it hold at.
    */
   async holdStandsAt(id: string, stage: PaperclipStage | "done"): Promise<boolean> {
+    // A card waiting on an operator stays put at every stage until the label comes off; a close still releases it.
+    if (stage !== "done" && this.waitsOnOperator(id)) return true;
     const placed = await this.placedLabel(id);
     if (placed) {
       const want = stage === "done" ? null : stageTarget(this.env.cfg, stage).label;

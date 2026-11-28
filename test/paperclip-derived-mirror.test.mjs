@@ -355,3 +355,23 @@ test("EM#2088: the labels unread, a descriptor-less Blocked card is held (fail c
     assert.equal(placement.operatorHold("r7"), true, "after the retry window the label is read and the card still carries it");
   }
 });
+
+test("EM#2088: the operator hold outranks GitHub moving on: snapshot, a restarted mirror and a live event all keep it; the label off, it moves", async () => {
+  const fake = fakePaperclip([heldAsk()], [], HOLD_LABELS());
+  const merged = [{ number: 7, labels: ["pr merged"] }];
+  await onSnap(mirrorOn(fake, HOLD).mirror, "example/r", snap(AT_GATE), logger());
+  await onSnap(mirrorOn(fake, HOLD).mirror, "example/r", snap(merged), logger());
+  const before = place(fake)[0];
+  assert.equal(before.status, "blocked", "a stage change does not release an operator hold");
+  assert.equal(before.assignee, EM_AGENT);
+  assert.deepEqual(before.labels, ["L-hold", "L-pv"], "the stage label is not rewritten under the hold");
+  const { mirror } = mirrorOn(fake, HOLD);
+  const placement = mirror.placement ?? mirror.snapshotSync?.placement;
+  await placement.index.refreshRow("r7");
+  assert.equal(await placement.holdOutranksLive("r7", "merged"), true, "an event-driven move at a new stage is outranked");
+  assert.equal(await placement.holdStandsAt("r7", "merged"), true);
+  fake.rows[0].labelIds = ["L-pv"];
+  assert.equal(await placement.holdOutranksLive("r7", "merged"), false, "read live: the label off, the event may move it");
+  await onSnap(mirrorOn(fake, HOLD).mirror, "example/r", snap(merged), logger());
+  assert.notEqual(fake.rows[0].status, "blocked");
+});

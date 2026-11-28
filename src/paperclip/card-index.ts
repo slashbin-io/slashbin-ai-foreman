@@ -210,13 +210,13 @@ export class CardIndex {
     this.rowState.set(id, waiting ? `waiting\n${action ?? ""}` : `status:${row.status}`);
     if (row.status === blockedName && action) this.blockAction.set(id, String(action));
     else this.blockAction.delete(id);
-    const have = this.rowContent.get(id);
-    if (have) {
-      this.rowContent.set(id, {
-        ...have, assigneeAgentId: row.assigneeAgentId ?? null, assigneeUserId: row.assigneeUserId ?? null,
-        ...(Array.isArray(row.labelIds) ? { labelIds: row.labelIds } : {}),
-      });
-    }
+    // A cold cache (a restarted process, before its first scan) takes the row's content from this read,
+    // as the scan would: without it the card's labels, an operator hold among them, go unseen.
+    const have = this.rowContent.get(id) ?? { title: String(row.title ?? ""), description: String(row.description ?? "") };
+    this.rowContent.set(id, {
+      ...have, assigneeAgentId: row.assigneeAgentId ?? null, assigneeUserId: row.assigneeUserId ?? null,
+      ...(Array.isArray(row.labelIds) ? { labelIds: row.labelIds } : {}),
+    });
   }
 
   /** The repo (`githubRepo`) card `id` belongs to, from the identity key its row was read under. */
