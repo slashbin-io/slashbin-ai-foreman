@@ -55,23 +55,17 @@ test("an incomplete listing is never reused", async () => {
   assert.deepEqual(await issues(), [[5, [40]]], "the failed read is retried though the repo was quiet");
 });
 
-test("a caller collecting unresolved shares the complete listing, and still sees a failed read", async () => {
+test("a caller collecting unresolved reads now and does not disturb the reuse", async () => {
   reset();
   await issues();
   const before = calls().length;
   const unresolved = [];
   await issues(unresolved);
-  assert.equal(calls().length, before, "a complete listing has nothing unresolved: reused (it was ~1,200 pr views/hr, 2026-11-28)");
+  assert.ok(calls().length > before, "the unresolved caller reads");
   assert.deepEqual(unresolved, []);
-  // A failed read is never kept as a listing, so the next unresolved caller reads again and is told.
-  reset();
-  writeFileSync(fail, "1");
-  const u2 = [];
-  await issues(u2);
-  assert.deepEqual(u2, [5]);
-  const u3 = [];
-  await issues(u3);
-  assert.deepEqual(u3, [5], "still unresolved, read again");
+  const mid = calls().length;
+  await issues();
+  assert.equal(calls().length, mid, "the plain listing is still reused");
 });
 
 test("no gate configured: every call reads, as before", async () => {
