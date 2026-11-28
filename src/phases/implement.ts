@@ -14,6 +14,7 @@ import { isUpstreamBlocked, tryAcquire, reportRunResult } from "../upstream-back
 import { runnerName } from "../refusal.js";
 import { backoffDelay, formatWait } from "../backoff.js";
 import { fieldTable } from "../issue-records.js";
+import { releaseIssues } from "../release-tracker.js";
 import { correctionsToBuild, devVerifyHolding, unlinkedFixes, visualDecisionHolder } from "./verify.js";
 import { alignLocalBase, resolveStartRef, settleSkillSync, type SyncOutcome } from "../skill-sync.js";
 import { CycleEvent, activeRuns, itemOf, notifyOnce, prReport, releaseIfResolved, startReport, stoppedReason } from "./common.js";
@@ -251,6 +252,36 @@ export async function fixesForHold(
     }
   }
   return fixes;
+}
+
+/**
+ * The release-hold build-first check (slashbin-ai-foreman#448): the open release PR is held while an issue it lists is
+ * unsigned (`unsignedIssues`, the sign-off gate), and that issue's sign-off waits on its corrective. Each unsigned
+ * issue is a holder for `fixesForHold`, the same relation and the same rule as a dev-verification hold: a linked
+ * corrective builds ahead of the severity queue, a body mention does not. No release PR, nothing unsigned, or an
+ * unreadable fact answers [] and the queue builds in order. The unlinked-fix question is not asked here: it belongs to
+ * a verification hold (`verifying` is null). Exported for tests.
+ */
+export async function releaseHeldFixes(
+  rt: ForemanRuntime, repoConfig: RepoConfig, candidates: readonly number[], logger: Logger,
+): Promise<number[]> {
+  if (candidates.length === 0) return [];
+  let unsigned: number[];
+  try {
+    const open = await codeHost().findOpenPromotionPR(repoConfig.githubRepo, repoConfig.productionBranch, repoConfig.baseBranch, repoConfig.repoPath, logger);
+    if (!open) return [];
+    const listed = new Set(releaseIssues(open.body));
+    const issues = (await codeHost().getOpenIssues(repoConfig.githubRepo, repoConfig.repoPath, logger)).filter((i) => listed.has(i.number));
+    unsigned = await codeHost().unsignedIssues(issues, listed, repoConfig.lifecycleLabels, codeHost().foremanAppliedOrHold(repoConfig, logger));
+  } catch (err) {
+    logger.warn(`The release hold could not be read (${(err instanceof Error ? err.message : String(err)).split("\n")[0]}) — building in queue order`);
+    return [];
+  }
+  const fixes = new Set<number>();
+  for (const holder of unsigned) {
+    for (const n of await fixesForHold(rt, repoConfig, holder, null, candidates.filter((c) => c !== holder), logger)) fixes.add(n);
+  }
+  return [...fixes];
 }
 
 /**
@@ -638,13 +669,16 @@ export async function tryBatchImplementation(
   const followUpOf = verifying ?? visualDecisionHolder(holding, verifyHolds, config.backoff.verifyRetry.maxAttempts);
   // The fix is the issue that CORRECTS the held one, by the code host's relation (blocked-by, sub-issue or the legacy
   // title: `Relation`, src/adapters.ts). Read only while a hold stands and no feature PR does.
-  const fixes = !featurePr && followUpOf !== null && !stoppedHolders.has(followUpOf)
-    ? (await fixesForHold(rt, repoConfig, followUpOf, verifying, [...new Set([...actionableIssues, ...handOff])], repoLogger))
-      .filter((n) => !stoppedCorrectives.has(n))
+  // The same holds for an issue the open release PR waits on unsigned (#448): its corrective builds first too.
+  const everyCandidate = [...new Set([...actionableIssues, ...handOff])];
+  const verifyFixes = !featurePr && followUpOf !== null && !stoppedHolders.has(followUpOf)
+    ? await fixesForHold(rt, repoConfig, followUpOf, verifying, everyCandidate, repoLogger)
     : [];
+  const releaseFixes = featurePr ? [] : await releaseHeldFixes(rt, repoConfig, everyCandidate, repoLogger);
+  const fixes = [...new Set([...verifyFixes, ...releaseFixes])].filter((n) => !stoppedCorrectives.has(n));
   if (fixes.length > 0) {
     actionableIssues.splice(0, actionableIssues.length, ...fixes);
-    repoLogger.info(`Building ${fixes.map((n) => `#${n}`).join(", ")} now — the fix for #${followUpOf}, whose dev verification is waiting on it`);
+    repoLogger.info(`Building ${fixes.map((n) => `#${n}`).join(", ")} now — the fix for ${[...(verifyFixes.length ? [`#${followUpOf}, whose dev verification is waiting on it`] : []), ...(releaseFixes.length ? ["an issue the open release is held on unsigned"] : [])].join(" and ")}`);
   }
   // A stopped chain's corrective leaves the batch, and the batch is cut again from the rest: with a batch of one, the
   // corrective at the head of the queue would otherwise starve everything behind it.
