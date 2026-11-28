@@ -2,6 +2,7 @@
 
 import type { RepoConfig } from "../config.js";
 import { ghAsync } from "./gh.js";
+import { canonicalRepo } from "./repo-identity.js";
 
 /** The newest event time on an issue's timeline (ms); null when it has none. Throws on a failed read. */
 export async function lastIssueActivity(config: RepoConfig, num: number): Promise<number | null> {
@@ -25,4 +26,18 @@ export async function retireLabelledIssue(config: RepoConfig, num: number, label
   } catch {
     return false;
   }
+}
+
+/**
+ * Merged base -> production promotions whose text mentions issue `num` (one search; the caller confirms each hit by its
+ * manifest, since a search also matches an incidental mention). Throws on a failed read.
+ */
+export async function mergedPromotionsMentioning(config: RepoConfig, num: number): Promise<{ body: string }[]> {
+  // `--search` on a pre-transfer name answers empty, not an error: use the canonical name.
+  const repo = await canonicalRepo(config.githubRepo, config.repoPath);
+  const out = await ghAsync([
+    "pr", "list", "--repo", repo, "--state", "merged", "--base", config.productionBranch, "--head", config.baseBranch,
+    "--search", `${num} in:body`, "--json", "body", "--limit", "100",
+  ], config.repoPath);
+  return JSON.parse(out || "[]") as { body: string }[];
 }

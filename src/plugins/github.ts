@@ -99,6 +99,7 @@ export function githubCodeHost(
     bounceForRedCI: ciGate.bounceForRedCI,
     commentOnIssue: ciGate.commentOnIssue,
     lastIssueActivity: evidence.lastIssueActivity,
+    mergedPromotionsMentioning: evidence.mergedPromotionsMentioning,
     retireLabelledIssue: evidence.retireLabelledIssue,
     countCiBouncesSinceReview: ciGate.countCiBouncesSinceReview,
     getPRCheckVerdict: ciGate.getPRCheckVerdict,

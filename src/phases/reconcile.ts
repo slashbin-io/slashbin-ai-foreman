@@ -247,7 +247,7 @@ export async function runAwaitingEvidenceExpiry(repoConfig: RepoConfig, config: 
     const plugin = roleFor("unstick", config);
     const host = codeHost();
     const repo = repoConfig.githubRepo;
-    const shipped = shippedInPromotions((limit) => host.recentMergedReleasePrs(repoConfig, undefined, limit));
+    const shipped = shippedInPromotions((n) => host.mergedPromotionsMentioning(repoConfig, n));
     const res = await expireAwaitingEvidence(nowMs, maxAge, config.unstickEscalationOwner ?? "", {
       // A card that also carries a lifecycle or blocked label is still in the pipeline: expiry leaves it to its stage.
       openLabeled: async () => (await host.getOpenIssues(repo, repoConfig.repoPath, logger))

@@ -11,19 +11,19 @@ import type { Logger } from "../logger.js";
 import { formatWait } from "../backoff.js";
 import { releaseIssues } from "../release-tracker.js";
 
-/** How many of the latest merged production promotions are read (every promotion a repo has, in practice: a card shipped long ago still closes) for "shipped". A card in none of them is unknown, not shipped. */
-export const PROMOTION_WINDOW = 1000;
-
 /**
- * The `shipped` check: a card is shipped only when a merged production promotion's body names it (a `- #N` manifest line, read by `releaseIssues`). The window is read once, on first use. A card merged only to the base branch is in no promotion, and one older
- * than the window is unknown: both read as not shipped, so they get the follow-up and are never closed. A failed read throws.
+ * The `shipped` check, run only for a card already past the maximum age: one search of merged production promotions that
+ * mention the card, each hit confirmed by `releaseIssues` (a `- #N` manifest line; a mention in a title or body is not
+ * shipping). No age window. A search that errors or finds nothing, a hit the parser rejects, and a card merged only to the
+ * base branch all read as not shipped: the card gets the follow-up and is never closed.
  */
-export function shippedInPromotions(listPromotions: (limit: number) => Promise<{ body: string }[]>): (card: number) => Promise<boolean> {
-  let named: Promise<Set<number>> | null = null;
+export function shippedInPromotions(search: (card: number) => Promise<{ body: string }[]>): (card: number) => Promise<boolean> {
   return async (card) => {
-    named ??= listPromotions(PROMOTION_WINDOW).then((prs) =>
-      new Set(prs.flatMap((p) => releaseIssues(p.body))));
-    return (await named).has(card);
+    try {
+      return (await search(card)).some((p) => releaseIssues(p.body).includes(card));
+    } catch {
+      return false;
+    }
   };
 }
 
