@@ -85,6 +85,9 @@ export class SnapshotSync {
       }
       if (!id) continue;
       ids.push([c, id]);
+      // A blocked issue labelled for a person is that person's card, not the blocked owner's.
+      const person = c.state === "open" ? assigneeFor(this.env.cfg, { labels: c.labels ?? [], repo: c.item.repo, blocked: c.stage === "blocked" })?.assigneeUserId : null;
+      if (person) this.placement.personHolds.set(id, person); else this.placement.personHolds.delete(id);
       this.learnSignoff(id, c.signoff);
       if (c.hold) this.placement.holdAction.set(id, c.hold.action);
       else this.placement.holdAction.delete(id);

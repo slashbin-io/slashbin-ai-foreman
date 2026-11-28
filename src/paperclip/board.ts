@@ -83,7 +83,7 @@ export function foremanOwnsCard(
 export type LiveLease = { leaseAt: string; rows: Array<{ id: string; phase: keyof typeof SESSION_STAGE; fallback?: Stage }> };
 
 /** The board settings a mapping needs; missing ones take the defaults. */
-type BoardConfig = Pick<PaperclipConfig, "agentId"> & Partial<Pick<PaperclipConfig, "board" | "roles" | "stageLabels" | "statusMap" | "humanUserId">>;
+type BoardConfig = Pick<PaperclipConfig, "agentId"> & Partial<Pick<PaperclipConfig, "board" | "roles" | "stageLabels" | "statusMap" | "humanUserId" | "personHoldLabels">>;
 
 function filled(cfg: BoardConfig) {
   const d = paperclipBoardDefaults();
@@ -142,6 +142,8 @@ export type CardAssignee = { assigneeAgentId: string | null; assigneeUserId: str
  *
  * - labelled `approved-for-human` → the `humanUserId` user (unset → both null,
  *   so the card is still written, unassigned).
+ * - at the `blocked` stage (`blocked`: it carries the blocked label) and labelled with a key of
+ *   `personHoldLabels` → that label's user, the first in config order when several match.
  * - anything else → undefined: no assignment here, the stage's holder stands.
  *
  * It never assigns an agent. Paperclip wakes an agent whose wake-on-demand is on
@@ -149,7 +151,12 @@ export type CardAssignee = { assigneeAgentId: string | null; assigneeUserId: str
  * bot (the Engineering Manager's) has it on, so a sync assigning it each EM-repo
  * row would start one run per row. A user assignment wakes nothing.
  */
-export function assigneeFor(cfg: BoardConfig, item: { labels: readonly string[]; repo: string }): CardAssignee | undefined {
+export function assigneeFor(cfg: BoardConfig, item: { labels: readonly string[]; repo: string; blocked?: boolean }): CardAssignee | undefined {
+  if (item.blocked) {
+    for (const [label, user] of Object.entries(cfg.personHoldLabels ?? {})) {
+      if (item.labels.includes(label)) return { assigneeAgentId: null, assigneeUserId: user };
+    }
+  }
   if (item.labels.includes(HUMAN_HOLD_LABEL)) {
     return { assigneeAgentId: null, assigneeUserId: cfg.humanUserId ?? null };
   }

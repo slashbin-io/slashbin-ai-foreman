@@ -196,6 +196,8 @@ export const paperclipConfigSchema = z.object({
   roles: z.record(z.string().regex(/^\w+$/), roleSchema).default({}),
   // The Paperclip user id of the person who holds `approved-for-human` cards (assigneeFor in board.ts), applied by the card sync (ownsCards) to an open card in no lifecycle stage. Set it in the installed `.ai-agent.json`: a person's id never goes in the repo. Unset = those cards are written unassigned.
   humanUserId: z.string().min(1).optional(),
+  // A map from a GitHub label to a Paperclip user id: a card at the `blocked` stage whose issue carries one of these labels is held by that user and by no agent (assigneeFor in board.ts), applied by the card sync (ownsCards). The first label in this map's order wins when several match; the label or the blocked label coming off returns the card to its normal placement. Set it in the installed `.ai-agent.json`: a person's id never goes in the repo. Empty = a blocked card is held by the blocked stage's owner.
+  personHoldLabels: z.record(z.string().min(1), z.string().min(1)).default({}),
   // The role key the Foreman's own agent reports to, applied by `npm run paperclip:register`. Unset = left as it is.
   agentReportsTo: z.string().min(1).optional(),
   // Per lifecycle stage: the role that holds the card ("foreman" or a key of roles), its status bucket, and its stage label (a key of stageLabels, or null for none).

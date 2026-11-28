@@ -460,9 +460,9 @@ export class CardIndex {
   }
 
   /** Record that card `id` is now `agentId`'s, so the next pass compares holders on fact. */
-  setHolder(id: string, agentId: string | null): void {
+  setHolder(id: string, agentId: string | null, userId: string | null = null): void {
     const have = this.rowContent.get(id);
-    if (have) this.rowContent.set(id, { ...have, assigneeAgentId: agentId, assigneeUserId: null });
+    if (have) this.rowContent.set(id, { ...have, assigneeAgentId: agentId, assigneeUserId: userId });
   }
 
   /**
