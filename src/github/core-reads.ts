@@ -8,7 +8,7 @@ import type { DeploymentView, IssueTextRow } from "../code-host.js";
 import type { RepoConfig } from "../config.js";
 import { ghAsync } from "./gh.js";
 import { closedPrVersion, ghKeyed } from "./cache.js";
-import { branchPrefixOf, isForemanOwnedHead, isLegacyFeatureHead } from "../foreman-branch.js";
+import { branchPrefixOf, isForemanFeatureHead, isForemanOwnedHead, isLegacyFeatureHead } from "../foreman-branch.js";
 
 /** `lastEditedAt` of issue `n` as GraphQL returns it: undefined when absent, null when never edited. Throws on a failed read. */
 export async function issueLastEditedAt(repoConfig: RepoConfig, n: number): Promise<string | null | undefined> {
@@ -152,7 +152,7 @@ export async function featurePrUrlFallback(config: RepoConfig, branches: readonl
   }
   try {
     const prs = JSON.parse(stdout || "[]") as { url: string; headRefName: string }[];
-    const owned = prs.filter((p) => isForemanOwnedHead(config, p.headRefName));
+    const owned = prs.filter((p) => isForemanFeatureHead(config, p.headRefName)); // a sync PR is never the feature PR
     return (owned.find((p) => branches.includes(p.headRefName)) ?? owned[0])?.url;
   } catch {
     return undefined;
