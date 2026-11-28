@@ -239,6 +239,13 @@ async function trackStageStalls(rt: ForemanRuntime, repoConfig: RepoConfig, conf
     log.warn(`Could not read stages for the stage stalls: ${err instanceof Error ? err.message : String(err)}`);
     return loaded;
   }
+  // The picker's own occupancy (implement.ts gate 1): a build or revise session running, or an open feature PR. A
+  // failed PR read is not occupancy, so a read that keeps failing still stalls.
+  let buildOccupied = rt.builds.isInFlight(repoConfig.name);
+  if (!buildOccupied && [...stages.values()].includes("approved")) {
+    try { buildOccupied = (await codeHost().findOpenFeaturePR(repoConfig)) !== null; }
+    catch (err) { log.warn(`Could not read the open feature PR for the stage stalls: ${err instanceof Error ? err.message : String(err)}`); }
+  }
   const indexed = new Set(repoRecord?.stageStalls ?? []);
   const gone = [...indexed].filter((n) => !open.has(n));
   const closed = gone.length > 0 ? await rt.records.loadIssueRecords(repoConfig, gone) : null;
@@ -249,6 +256,7 @@ async function trackStageStalls(rt: ForemanRuntime, repoConfig: RepoConfig, conf
     new Map([...(closed?.records ?? [])].map(([n, r]) => [n, r.stalls])),
     unreadable,
     repoConfig.githubRepo,
+    buildOccupied,
   );
   const now = new Date().toISOString();
   const index = new Set(plan.index);
