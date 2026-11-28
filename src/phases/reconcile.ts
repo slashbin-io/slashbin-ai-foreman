@@ -15,6 +15,8 @@ import { CycleEvent, itemOf, labelFromTrailer, notifyOnce, workStateOf } from ".
 import { codeHost } from "../plugins/registry.js";
 import type { CodeHost } from "../code-host.js";
 import type { ForemanRuntime } from "../runtime.js";
+import { AWAITING_EVIDENCE_LABEL, expireAwaitingEvidence } from "./evidence-expiry.js";
+import { epicRefs } from "../unstick.js";
 
 /**
  * Set the outcome label the review run reported, for issues it merged but left at
@@ -226,6 +228,45 @@ export async function resumeHumanMerges(
     if (settled) out.push({ issueNumber: m.issueNumber, prNumber: m.prNumber, settled });
   }
   return out;
+}
+
+/** How often a repo's `awaiting evidence` cards are looked at: each check reads one timeline per labelled card. */
+const EVIDENCE_CHECK_EVERY_MS = 3_600_000;
+const evidenceCheckedAt = new Map<string, number>();
+
+/**
+ * `awaiting evidence` cards expire like a production hold (`backoff.holdMaxAgeMs`; off at 0): see `evidence-expiry.ts`.
+ * Hourly per repo. Never throws.
+ */
+export async function runAwaitingEvidenceExpiry(repoConfig: RepoConfig, config: AgentConfig, logger: Logger, nowMs = Date.now()): Promise<number> {
+  const maxAge = config.backoff.holdMaxAgeMs;
+  if (!(maxAge > 0)) return 0;
+  if (nowMs - (evidenceCheckedAt.get(repoConfig.name) ?? 0) < EVIDENCE_CHECK_EVERY_MS) return 0;
+  evidenceCheckedAt.set(repoConfig.name, nowMs);
+  try {
+    const plugin = roleFor("unstick", config);
+    const host = codeHost();
+    const repo = repoConfig.githubRepo;
+    const res = await expireAwaitingEvidence(nowMs, maxAge, config.unstickEscalationOwner ?? "", {
+      openLabeled: async () => (await host.getOpenIssues(repo, repoConfig.repoPath, logger))
+        .filter((i) => host.hasLabel(i, AWAITING_EVIDENCE_LABEL)).map((i) => i.number),
+      newestEventAt: (n) => host.lastIssueActivity(repoConfig, n),
+      readBody: (n) => host.readIssueBody(repoConfig, n),
+      mergedPr: async (n) => (await host.findIssuesMergedToBase(repoConfig, [n], logger))[0]?.prNumber ?? null,
+      epicOf: (body) => (repoConfig.epicRefLabel ? (epicRefs(body, repoConfig.epicRefLabel)[0] ?? null) : null),
+      fileFollowUp: async (input) => plugin?.fileVerifyFollowUp
+        ? await plugin.fileVerifyFollowUp(repoConfig, config, input, logger)
+        : { kind: "failed", detail: "no plugin files follow-ups" },
+      closeCard: (n, c) => host.retireLabelledIssue(repoConfig, n, AWAITING_EVIDENCE_LABEL, c, true),
+      releaseCard: (n, c) => host.retireLabelledIssue(repoConfig, n, AWAITING_EVIDENCE_LABEL, c, false),
+    }, logger);
+    const n = res.closed.length + res.followedUp.length;
+    if (n > 0 || res.kept.length > 0) logger.info(`\`${AWAITING_EVIDENCE_LABEL}\` expiry: closed ${res.closed.join(",") || "none"}, followed up ${res.followedUp.join(",") || "none"}, kept ${res.kept.join(",") || "none"}`);
+    return n;
+  } catch (err) {
+    logger.warn(`\`${AWAITING_EVIDENCE_LABEL}\` expiry failed: ${err instanceof Error ? err.message : String(err)}`);
+    return 0;
+  }
 }
 
 /**
@@ -450,6 +491,7 @@ export async function runReconcileStage(
   // never throws, and a null baseHead (the fetch failed) skips it.
   await reviewLandedRange(rt, repoConfig, config, baseHead, reconLogger, events);
 
+  processed += await runAwaitingEvidenceExpiry(repoConfig, config, base.child({ phase: "reconcile" }));
   return processed;
 }
 
