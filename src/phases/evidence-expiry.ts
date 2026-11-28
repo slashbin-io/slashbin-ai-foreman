@@ -3,7 +3,7 @@
 // (a service repo card sat 2.5 months on a dev test that needed infrastructure nobody built). It now expires like a production
 // verification hold: past `backoff.holdMaxAgeMs` (the same knob, `FOREMAN_HOLD_MAX_AGE`) since its newest timeline event.
 //
-// A card with a merged PR is closed as shipped, its evidence bar unmet, with the bar quoted. A card with no merged PR has
+// A card with a PR merged to production is closed as shipped, its evidence bar unmet, with the bar quoted. A card with no merged PR has
 // nothing shipped to close: its follow-up is filed through the EM plugin (`fileVerifyFollowUp`) and the label is taken off,
 // so the card is not re-filed every pass. Record first, change second: a failed filing changes nothing and is retried.
 import type { VerifyFollowUpInput, VerifyFollowUpOutcome } from "../plugins/contract.js";
@@ -40,7 +40,7 @@ export interface EvidenceExpiryDeps {
   /** The newest timeline event's time (ms); null when it cannot be read (the card is left alone). */
   newestEventAt(card: number): Promise<number | null>;
   readBody(card: number): Promise<string>;
-  /** The merged PR that implemented the card, or null. */
+  /** The PR merged to the production branch that implemented the card (any keyword, any age), or null. */
   mergedPr(card: number): Promise<number | null>;
   epicOf(body: string): number | null;
   fileFollowUp(input: VerifyFollowUpInput): Promise<VerifyFollowUpOutcome>;
@@ -85,7 +85,7 @@ export async function expireAwaitingEvidence(
         continue;
       }
       const ok = await deps.releaseCard(card,
-        `**No merged PR, evidence bar not met.** This card waited on evidence for ${age}, the maximum, and no PR of it has merged. ` +
+        `**No shipped PR, evidence bar not met.** This card waited on evidence for ${age}, the maximum, and no PR of it has merged to production. ` +
         `The open question moved to ${filed.url}; the \`${AWAITING_EVIDENCE_LABEL}\` label is removed. The bar it waited on: ${bar}`);
       (ok ? out.followedUp : out.kept).push(card);
     } catch (err) {

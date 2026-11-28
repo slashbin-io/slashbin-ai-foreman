@@ -248,11 +248,14 @@ export async function runAwaitingEvidenceExpiry(repoConfig: RepoConfig, config: 
     const host = codeHost();
     const repo = repoConfig.githubRepo;
     const res = await expireAwaitingEvidence(nowMs, maxAge, config.unstickEscalationOwner ?? "", {
+      // A card that also carries a lifecycle or blocked label is still in the pipeline: expiry leaves it to its stage.
       openLabeled: async () => (await host.getOpenIssues(repo, repoConfig.repoPath, logger))
-        .filter((i) => host.hasLabel(i, AWAITING_EVIDENCE_LABEL)).map((i) => i.number),
+        .filter((i) => host.hasLabel(i, AWAITING_EVIDENCE_LABEL)
+          && ![...Object.values(repoConfig.lifecycleLabels), repoConfig.github.blockedLabel].some((l) => host.hasLabel(i, l)))
+        .map((i) => i.number),
       newestEventAt: (n) => host.lastIssueActivity(repoConfig, n),
       readBody: (n) => host.readIssueBody(repoConfig, n),
-      mergedPr: async (n) => (await host.findIssuesMergedToBase(repoConfig, [n], logger))[0]?.prNumber ?? null,
+      mergedPr: (n) => host.findShippedPr(repoConfig, n),
       epicOf: (body) => (repoConfig.epicRefLabel ? (epicRefs(body, repoConfig.epicRefLabel)[0] ?? null) : null),
       fileFollowUp: async (input) => plugin?.fileVerifyFollowUp
         ? await plugin.fileVerifyFollowUp(repoConfig, config, input, logger)
