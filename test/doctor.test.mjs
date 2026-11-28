@@ -52,7 +52,8 @@ function arrange(cfg, state) {
   mkdirSync(checkout, { recursive: true });
   execFileSync("git", ["init", "-q", checkout]);
   const cfgPath = join(dir, ".ai-agent.json");
-  if (cfg) writeFileSync(cfgPath, JSON.stringify({ ...cfg, repos: cfg.repos.map((r) => ({ repoPath: checkout, ...r })) }));
+  // Off unless a case sets it: the default (on) probes the host's real bubblewrap and DNS (EM#3300).
+  if (cfg) writeFileSync(cfgPath, JSON.stringify({ confineSessions: false, ...cfg, repos: cfg.repos.map((r) => ({ repoPath: checkout, ...r })) }));
   const stateFile = join(dir, "state.json");
   const logFile = join(dir, "gh.log");
   writeFileSync(stateFile, JSON.stringify(state ?? {}));
