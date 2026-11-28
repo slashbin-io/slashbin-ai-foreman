@@ -26,6 +26,32 @@ export function isForemanOwnedHead(config: OwnershipConfig, head: string | undef
   return head.startsWith(branchPrefixOf(config)) || isLegacyFeatureHead(config, head);
 }
 
+/**
+ * The branch a sync PR comes from (`productionBranch` merged back into `baseBranch`). It carries the Foreman's
+ * prefix, so it is Foreman-owned (never deleted or pushed to by a person's rules), but it is NOT a feature PR.
+ */
+export function syncBranchName(productionBranch: string, baseBranch: string): string {
+  return `foreman/sync-${productionBranch}-into-${baseBranch}`;
+}
+
+/**
+ * True iff `head` is one of the repo's feature-PR heads: Foreman-owned and not its sync branch (nor the production
+ * branch, the head an older Foreman opened sync PRs from). A sync PR is the promote stage's (`tryMergeSyncPR`); counted
+ * as a feature PR it held the repo's one build slot and was handed the revisions of another issue's PR
+ * (2026-11-28: a sync PR that could not merge left an approved issue unbuilt, and another PR's change request was
+ * "revised" on the sync PR).
+ */
+export function isForemanFeatureHead(
+  config: OwnershipConfig & { productionBranch?: string; baseBranch?: string },
+  head: string | undefined | null,
+): boolean {
+  if (!isForemanOwnedHead(config, head)) return false;
+  if (config.productionBranch && config.baseBranch) {
+    if (head === syncBranchName(config.productionBranch, config.baseBranch) || head === config.productionBranch) return false;
+  }
+  return true;
+}
+
 /** Lowercase, non-alphanumerics to `-`, collapsed, trimmed, at most `max` chars with no trailing `-`. */
 export function slugify(title: string, max = 40): string {
   return title
