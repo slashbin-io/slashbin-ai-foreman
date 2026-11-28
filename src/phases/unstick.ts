@@ -40,7 +40,7 @@ import { codeHost } from "../plugins/registry.js";
 import type { CodeHost } from "../code-host.js";
 import type { ForemanRuntime } from "../runtime.js";
 import { workSourceFor } from "../work-source.js";
-import { planStageStalls } from "../stage-stalls.js";
+import { BUILD_STAGES, planStageStalls } from "../stage-stalls.js";
 import type { StageOrDone } from "../lifecycle.js";
 
 function transcript(repoConfig: RepoConfig, what: string, cycleNumber: number): string {
@@ -232,9 +232,15 @@ async function widenHandoffIndex(rt: ForemanRuntime, repoConfig: RepoConfig, kno
 async function trackStageStalls(rt: ForemanRuntime, repoConfig: RepoConfig, config: AgentConfig, open: ReadonlySet<number> | null, loaded: IssueRecords, repoRecord: RepoRecord | null, log: Logger): Promise<IssueRecords> {
   if (!stallClockEnabled() || repoConfig.syncOnly || !open) return loaded;
   let stages: Map<number, StageOrDone>;
+  const held = new Set<number>();
   try {
-    const items = await workSourceFor(repoConfig).snapshot(repoConfig, log);
+    const source = workSourceFor(repoConfig);
+    const items = await source.snapshot(repoConfig, log);
     stages = new Map(items.map((i) => [i.item.issueNumber, i.stage]));
+    // Only when the build is free: behind a build every approved card is already queued (stage-stalls.ts).
+    if (source.pickupHold && ![...stages.values()].some((s) => BUILD_STAGES.has(s))) {
+      for (const [n, s] of stages) if (s === "approved" && await source.pickupHold(repoConfig, n)) held.add(n);
+    }
   } catch (err) {
     log.warn(`Could not read stages for the stage stalls: ${err instanceof Error ? err.message : String(err)}`);
     return loaded;
@@ -249,6 +255,7 @@ async function trackStageStalls(rt: ForemanRuntime, repoConfig: RepoConfig, conf
     new Map([...(closed?.records ?? [])].map(([n, r]) => [n, r.stalls])),
     unreadable,
     repoConfig.githubRepo,
+    held,
   );
   const now = new Date().toISOString();
   const index = new Set(plan.index);
