@@ -260,6 +260,12 @@ async function reviewPass(
       return false;
     }
     rt.memory.reviewDefer.clear(repoName);
+    // An approved PR left unmerged, or a run that failed, may be BEHIND a strict base; waiting never clears
+    // that. A request-for-changes verdict is left alone: the author's push is what moves that head.
+    const own = (result.trailers ?? []).find((t) => t.pr === candidate.prNumber);
+    if (!own?.merged && (!result.success || own?.verdict === "APPROVE")) {
+      try { await codeHost().recoverBehindPr(repoConfig.githubRepo, candidate.prNumber, repoConfig.repoPath, reviewLogger); } catch { /* best effort: the next pass retries */ }
+    }
     if (wantsSessionReports()) {
       report = await reviewReport(repoConfig, candidate.prNumber, result.trailers ?? [], result.summary, reviewSince, reviewLogger);
     }

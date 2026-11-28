@@ -6,7 +6,7 @@ import { writeFileSync, chmodSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { mkTmp } from "./tmp-dir.mjs";
-import { tryMergeSyncPR, noteMergeRefusal, MERGE_STALL_WARN_CYCLES } from "../dist/github/branch.js";
+import { tryMergeSyncPR, recoverBehindPr, noteMergeRefusal, MERGE_STALL_WARN_CYCLES } from "../dist/github/branch.js";
 
 const dir = mkTmp("fake-gh-behind-");
 const log = join(dir, "calls");
@@ -22,24 +22,31 @@ exit 0
 chmodSync(join(dir, "gh"), 0o755);
 process.env.PATH = `${dir}:${process.env.PATH}`;
 process.env.TECHLEAD_GITHUB_KEY = "t-test-token";
+process.env.FOREMAN_GITHUB_TOKEN = "f-test-token";
 const lines = { info: [], warn: [] };
 const logger = { debug() {}, info: (m) => lines.info.push(m), warn: (m) => lines.warn.push(m), error() {}, child() { return this; } };
 const reset = (state) => { writeFileSync(log, ""); writeFileSync(stateFile, state); lines.info = []; lines.warn = []; };
 const calls = () => readFileSync(log, "utf8");
 
-test("a BEHIND refusal updates the branch", async () => {
+test("a BEHIND feature PR has its branch updated", async () => {
   reset("BEHIND");
-  assert.equal(await tryMergeSyncPR("o/r", 7, tmpdir(), logger), false);
+  assert.equal(await recoverBehindPr("o/r", 7, tmpdir(), logger), true);
   assert.match(calls(), /api -X PUT repos\/o\/r\/pulls\/7\/update-branch/);
 });
 
-for (const state of ["DIRTY", "UNSTABLE", "BLOCKED"]) {
-  test(`a ${state} refusal does not update the branch`, async () => {
+for (const state of ["DIRTY", "UNSTABLE", "BLOCKED", "CLEAN"]) {
+  test(`a ${state} feature PR is not branch-updated`, async () => {
     reset(state);
-    assert.equal(await tryMergeSyncPR("o/r", 8, tmpdir(), logger), false);
+    assert.equal(await recoverBehindPr("o/r", 8, tmpdir(), logger), false);
     assert.doesNotMatch(calls(), /update-branch/);
   });
 }
+
+test("a BEHIND sync PR is never branch-updated: its head is the production branch", async () => {
+  reset("BEHIND");
+  assert.equal(await tryMergeSyncPR("o/r", 6, tmpdir(), logger), false);
+  assert.doesNotMatch(calls(), /update-branch/);
+});
 
 test("the same refusal across cycles warns with state and cycle count; a changed state restarts the count", () => {
   reset("");

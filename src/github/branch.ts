@@ -307,8 +307,9 @@ export async function tryMergeSyncPR(
     // durable state (the same refusal cycle after cycle) is reported by `noteMergeRefusal`.
     const message = err instanceof Error ? err.message : String(err);
     logger?.debug(`Sync PR #${prNumber} not mergeable yet: ${message}`);
+    // A sync PR's head IS the production branch: `update-branch` would merge the base into production,
+    // so a BEHIND sync PR is never updated. It is named in the stall warning instead.
     const state = await readMergeState(repo, prNumber, cwd);
-    if (state === "BEHIND") await updateBehindBranch(repo, prNumber, cwd, logger);
     noteMergeRefusal(repo, prNumber, state ?? "UNKNOWN", message, logger);
     return false;
   }
@@ -325,17 +326,33 @@ async function readMergeState(repo: string, prNumber: number, cwd: string): Prom
 }
 
 /**
- * A refused merge whose head is BEHIND its base is not cleared by waiting: with `strict` branch
- * protection the merge stays refused until the branch is updated. Only that state is updated;
- * a conflict or a failing check is not fixed by pushing a base merge onto the branch.
- * The next cycle's retry merges it.
+ * A feature PR whose merge is not done and whose head is BEHIND its base is not cleared by waiting: with
+ * `strict` branch protection it stays unmergeable until the branch is updated. Only BEHIND is updated; a
+ * conflict or a failing check is not fixed by a base merge, and is counted toward the stall warning.
+ * The head moves, so the next cycle's review judges the new head and merges it. Never called for a sync PR
+ * (its head is the production branch). Returns true when the branch was updated.
  */
-async function updateBehindBranch(repo: string, prNumber: number, cwd: string, logger?: Logger): Promise<void> {
+export async function recoverBehindPr(repo: string, prNumber: number, cwd: string, logger?: Logger): Promise<boolean> {
+  let state: string | null;
   try {
-    await ghAsTechLeadAsync(["api", "-X", "PUT", `repos/${repo}/pulls/${prNumber}/update-branch`], cwd);
-    logger?.info(`Sync PR #${prNumber} was behind its base — branch updated, merge retried next cycle`);
+    state = (await ghAsync(["pr", "view", String(prNumber), "--repo", repo, "--json", "mergeStateStatus", "--jq", ".mergeStateStatus"], cwd)).trim() || null;
+  } catch {
+    return false;
+  }
+  if (!state) return false;
+  if (state !== "BEHIND") {
+    if (state === "CLEAN") clearMergeRefusal(repo, prNumber);
+    else noteMergeRefusal(repo, prNumber, state, `merge state ${state}`, logger);
+    return false;
+  }
+  try {
+    await ghAsync(["api", "-X", "PUT", `repos/${repo}/pulls/${prNumber}/update-branch`], cwd);
+    logger?.info(`PR #${prNumber} was behind its base — branch updated; the next cycle reviews and merges the new head`);
+    noteMergeRefusal(repo, prNumber, "BEHIND", "behind its base", logger);
+    return true;
   } catch (err) {
-    logger?.warn(`Sync PR #${prNumber} is behind its base and the branch update failed: ${err instanceof Error ? err.message : String(err)}`);
+    logger?.warn(`PR #${prNumber} is behind its base and the branch update failed: ${err instanceof Error ? err.message : String(err)}`);
+    return false;
   }
 }
 
@@ -355,7 +372,7 @@ export function noteMergeRefusal(repo: string, prNumber: number, state: string, 
   refusals.set(key, cur);
   if (cur.cycles % MERGE_STALL_WARN_CYCLES === 0) {
     const minutes = Math.round((now - cur.since) / 60_000);
-    logger?.warn(`Sync PR ${key} refused for ${cur.cycles} consecutive cycles (${minutes} min), merge state ${state}: ${message.split("\n")[0]}`);
+    logger?.warn(`PR ${key} refused for ${cur.cycles} consecutive cycles (${minutes} min), merge state ${state}: ${message.split("\n")[0]}`);
   }
 }
 

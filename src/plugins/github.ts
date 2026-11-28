@@ -85,6 +85,7 @@ export function githubCodeHost(
     getRemoteBranchSha: branch.getRemoteBranchSha,
     productionDriftFiles: branch.productionDriftFiles,
     tryMergeSyncPR: branch.tryMergeSyncPR,
+    recoverBehindPr: branch.recoverBehindPr,
     forgetOpenPrs: cache.forgetOpenPrs,
     formatGhError: cache.formatGhError,
     getOpenIssues: cache.getOpenIssues,
