@@ -27,6 +27,8 @@ export class Placement {
   readonly blockedReason = new Map<string, string>();
   /** Task id → the role key that holds its Blocked card when it is not the stage's owner (`sre`: a failed dev deploy). */
   readonly blockedOwner = new Map<string, string>();
+  /** Task id → the Paperclip user a card at the `blocked` stage is held by, from its issue's person-hold label (`personHoldLabels`), set each snapshot. */
+  readonly personHolds = new Map<string, string>();
   /** A move a run of the card's assignee in flight deferred, retried at the next snapshot. */
   readonly deferredMoves = new Map<string, PaperclipStepMove>();
   /** Task id → the GitHub stage last seen for its issue, from the cycle snapshot. */
@@ -277,6 +279,14 @@ export class Placement {
    */
   holderMatches(id: string, stage: PaperclipStage | "done"): boolean {
     if (stage === "done") return true;
+    // A person-hold label puts the blocked card on that user; once the label goes, a card still on one of those users is placed again.
+    if (stage === "blocked") {
+      const have = this.index.rowContent.get(id);
+      const user = this.personHolds.get(id);
+      if (user) return !have || (have.assigneeUserId === user && !have.assigneeAgentId);
+      const people = Object.values(this.env.cfg.personHoldLabels ?? {});
+      return !have || !have.assigneeUserId || !people.includes(have.assigneeUserId);
+    }
     const t = stageTarget(this.env.cfg, stage);
     if (t.bucket === "blocked" || !t.agentId) return true;
     const have = this.index.rowContent.get(id);
@@ -353,12 +363,14 @@ export class Placement {
       const t = stageTarget(this.env.cfg, to, (to === "blocked" || to === "releaseParked") ? this.blockedOwner.get(id) : undefined);
       bucket = t.bucket;
       label = t.label;
-      if (t.agentId) holder = { assigneeAgentId: t.agentId, assigneeUserId: null };
+      const person = to === "blocked" ? this.personHolds.get(id) : undefined;
+      if (person) holder = { assigneeAgentId: null, assigneeUserId: person };
+      else if (t.agentId) holder = { assigneeAgentId: t.agentId, assigneeUserId: null };
       // Paperclip takes `blocked` only with an unblock descriptor.
       if (bucket === "blocked") {
         // A card held on GitHub says why, as the holder wrote it (`ownsCards`).
         const action = this.blockedReason.get(id) ?? ((to === "blocked" || to === "releaseParked") ? this.holdAction.get(id) : undefined) ?? LABEL_BLOCK_ACTION;
-        holder.unblockDescriptor = { owner: t.agentId ? { agentId: t.agentId } : "board", action };
+        holder.unblockDescriptor = { owner: t.agentId && !person ? { agentId: t.agentId } : "board", action };
       }
     }
     const labelIds = await this.labelIdsFor(id, label);
@@ -368,7 +380,7 @@ export class Placement {
       const unblock = holder.unblockDescriptor as { action: string } | undefined;
       if (unblock) this.index.blockAction.set(id, unblock.action);
       if (to !== "done") this.rowStage.set(id, to);
-      if ("assigneeAgentId" in holder) this.index.setHolder(id, holder.assigneeAgentId as string | null);
+      if ("assigneeAgentId" in holder) this.index.setHolder(id, holder.assigneeAgentId as string | null, holder.assigneeUserId as string | null);
       if (to === "done") this.index.markClosed(id);
       if (bucket !== "blocked") {
         this.blockedReason.delete(id);

@@ -569,3 +569,71 @@ test("human hold: a persisted block keeps its owner over the label", async () =>
   assert.equal(fake.rows[0].assigneeAgentId, "sre-agent");
   assert.notEqual(fake.rows[0].assigneeUserId, "alice-user");
 });
+
+// --- Person holds: a blocked card whose issue carries a person-hold label is that person's ---
+
+const PEOPLE = { "waiting-on-alice": "alice-user", "waiting-on-bob": "bob-user" };
+const blockedCard = (labels) => ({ item, title: "issue 7", url: "https://github.com/example/r/issues/7", state: "open", stage: issueStage(labels, false, LL, "approved"), labels });
+const personSnap = (mirror, labels) => snapshot(mirror, labels, {}, { cards: [blockedCard(labels)] });
+const labelHold = { owner: { agentId: "em-agent" }, action: "blocked: needs attention" };
+const cfgPeople = { ownsCards: true, personHoldLabels: PEOPLE };
+
+test("person hold: blocked + a mapped label ends on the user and no agent, and a second scan writes nothing", async () => {
+  const fake = fakePaperclip([row7("blocked", { assigneeAgentId: "em-agent", unblockDescriptor: labelHold })]);
+  const mirror = mirrorOn(fake, cfgPeople);
+  await personSnap(mirror, ["approved", "blocked", "waiting-on-alice"]);
+  assert.equal(fake.rows[0].status, "blocked");
+  assert.equal(fake.rows[0].assigneeUserId, "alice-user");
+  assert.equal(fake.rows[0].assigneeAgentId ?? null, null);
+  const writes = () => fake.calls.filter((c) => c.method === "PATCH").length;
+  const before = writes();
+  await personSnap(mirror, ["approved", "blocked", "waiting-on-alice"]);
+  assert.equal(writes(), before, "an already-assigned card is not rewritten");
+});
+
+test("person hold: the first label in config order wins when several match", async () => {
+  const fake = fakePaperclip([row7("blocked", { assigneeAgentId: "em-agent", unblockDescriptor: labelHold })]);
+  const mirror = mirrorOn(fake, cfgPeople);
+  await personSnap(mirror, ["approved", "blocked", "waiting-on-bob", "waiting-on-alice"]);
+  assert.equal(fake.rows[0].assigneeUserId, "alice-user");
+});
+
+test("person hold: blocked without a mapped label stays with the blocked owner, unchanged", async () => {
+  const fake = fakePaperclip([row7("blocked", { assigneeAgentId: "em-agent", unblockDescriptor: labelHold })]);
+  const mirror = mirrorOn(fake, cfgPeople);
+  await personSnap(mirror, ["approved", "blocked"]);
+  assert.equal(fake.rows[0].assigneeAgentId, "em-agent");
+  assert.equal(fake.rows[0].assigneeUserId ?? null, null);
+  assert.equal(statusPatches(fake).length, 0);
+});
+
+test("person hold: a mapped label without blocked is not a hold", async () => {
+  const fake = fakePaperclip([row7("in_review", { assigneeAgentId: "em-agent" })]);
+  const mirror = mirrorOn(fake, cfgPeople);
+  await personSnap(mirror, ["pr approved", "waiting-on-alice"]);
+  assert.equal(fake.rows[0].assigneeUserId ?? null, null);
+  assert.equal(fake.rows[0].assigneeAgentId, "em-agent");
+});
+
+test("person hold: a card entering blocked with the label is created straight onto the user", async () => {
+  const fake = fakePaperclip([row7("in_review", { assigneeAgentId: "em-agent" })]);
+  const mirror = mirrorOn(fake, cfgPeople);
+  await personSnap(mirror, ["approved", "blocked", "waiting-on-alice"]);
+  assert.equal(fake.rows[0].status, "blocked");
+  assert.equal(fake.rows[0].assigneeUserId, "alice-user");
+  assert.equal(fake.rows[0].assigneeAgentId ?? null, null);
+  assert.equal(fake.rows[0].unblockDescriptor.owner, "board");
+});
+
+test("person hold: the person label off, or the blocked label off, returns the card to normal placement", async () => {
+  for (const [after, status, agent] of [[["approved", "blocked"], "blocked", "em-agent"], [["pr approved", "waiting-on-alice"], "in_review", "em-agent"]]) {
+    const fake = fakePaperclip([row7("blocked", { assigneeAgentId: "em-agent", unblockDescriptor: labelHold })]);
+    const mirror = mirrorOn(fake, cfgPeople);
+    await personSnap(mirror, ["approved", "blocked", "waiting-on-alice"]);
+    assert.equal(fake.rows[0].assigneeUserId, "alice-user");
+    await personSnap(mirror, after);
+    assert.equal(fake.rows[0].status, status, after.join());
+    assert.equal(fake.rows[0].assigneeAgentId, agent, after.join());
+    assert.equal(fake.rows[0].assigneeUserId ?? null, null, after.join());
+  }
+});

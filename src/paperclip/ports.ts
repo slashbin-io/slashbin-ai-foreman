@@ -36,7 +36,7 @@ export interface IndexPort {
   markClosed(id: string): void;
   markOpen(id: string): void;
   terminal(id: string): boolean;
-  setHolder(id: string, agentId: string | null): void;
+  setHolder(id: string, agentId: string | null, userId?: string | null): void;
   repoOfCard(id: string): string | undefined;
   writtenRepo(id: string): string | null;
 }
@@ -46,6 +46,7 @@ export interface PlacementPort {
   readonly rowStage: Map<string, PaperclipStage>;
   readonly blockedReason: Map<string, string>;
   readonly blockedOwner: Map<string, string>;
+  readonly personHolds: Map<string, string>;
   readonly deferredMoves: Map<string, PaperclipStepMove>;
   readonly ghStage: Map<string, PaperclipStage | "done">;
   readonly blockedAt: Map<string, PaperclipStage | "done" | undefined>;
