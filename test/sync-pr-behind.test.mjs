@@ -6,7 +6,7 @@ import { writeFileSync, chmodSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { mkTmp } from "./tmp-dir.mjs";
-import { tryMergeSyncPR, recoverBehindPr, createSyncPR, noteMergeRefusal, MERGE_STALL_WARN_CYCLES } from "../dist/github/branch.js";
+import { tryMergeSyncPR, sweepOpenPrStates, createSyncPR, noteMergeRefusal, MERGE_STALL_WARN_CYCLES } from "../dist/github/branch.js";
 
 const dir = mkTmp("fake-gh-behind-");
 const log = join(dir, "calls");
@@ -16,6 +16,7 @@ echo "$*" >> "${log}"
 case "$1 $2" in
   "pr merge") echo "Pull request is not mergeable" >&2; exit 1;;
   "pr view") cat "${stateFile}";;
+  "pr list") cat "${dir}/list";;
   "pr create") echo "https://github.com/o/r/pull/99";;
   "api repos/o/r/git/ref/heads/develop") echo abc123;;
 esac
@@ -30,30 +31,44 @@ const logger = { debug() {}, info: (m) => lines.info.push(m), warn: (m) => lines
 const reset = (state) => { writeFileSync(log, ""); writeFileSync(stateFile, state); lines.info = []; lines.warn = []; };
 const calls = () => readFileSync(log, "utf8");
 
-test("a BEHIND feature PR has its branch updated", async () => {
-  reset("BEHIND");
-  assert.equal(await recoverBehindPr("o/r", 7, tmpdir(), logger), true);
-  assert.match(calls(), /api -X PUT repos\/o\/r\/pulls\/7\/update-branch/);
+const list = (...prs) => writeFileSync(join(dir, "list"), JSON.stringify(prs.map(([number, state, head = "em/x", isDraft = false]) => ({ number, mergeStateStatus: state, headRefName: head, isDraft }))));
+
+test("the sweep updates a BEHIND feature PR and no other state", async () => {
+  reset("");
+  list([7, "BEHIND"], [8, "DIRTY"], [9, "UNSTABLE"], [10, "BLOCKED"], [11, "CLEAN"], [12, "BEHIND", "em/d", true]);
+  assert.deepEqual(await sweepOpenPrStates("o/r", "develop", "main", tmpdir(), logger), [7]);
+  const c = calls();
+  assert.match(c, /api -X PUT repos\/o\/r\/pulls\/7\/update-branch/);
+  assert.equal((c.match(/update-branch/g) || []).length, 1);
 });
 
-for (const state of ["DIRTY", "UNSTABLE", "BLOCKED", "CLEAN"]) {
-  test(`a ${state} feature PR is not branch-updated`, async () => {
-    reset(state);
-    assert.equal(await recoverBehindPr("o/r", 8, tmpdir(), logger), false);
-    assert.doesNotMatch(calls(), /update-branch/);
-  });
-}
+test("the sweep never updates a sync PR, production-headed or on a sync branch", async () => {
+  reset("");
+  list([5, "BEHIND", "main"], [6, "BEHIND", "foreman/sync-main-into-develop"]);
+  assert.deepEqual(await sweepOpenPrStates("o/r", "develop", "main", tmpdir(), logger), []);
+  assert.doesNotMatch(calls(), /update-branch/);
+});
+
+test("a feature PR that stays DIRTY warns on its fifth consecutive sweep, naming the state and count", async () => {
+  reset("");
+  list([21, "DIRTY"]);
+  for (let i = 0; i < MERGE_STALL_WARN_CYCLES; i++) await sweepOpenPrStates("o/r", "develop", "main", tmpdir(), logger);
+  assert.equal(lines.warn.length, 1);
+  assert.match(lines.warn[0], /#21 refused for 5 consecutive cycles .*DIRTY/);
+  assert.doesNotMatch(calls(), /update-branch/);
+});
+
+test("a BEHIND sync PR headed by the production branch is closed so a dedicated one replaces it", async () => {
+  reset("BEHIND main");
+  assert.equal(await tryMergeSyncPR("o/r", 6, tmpdir(), logger, "main"), false);
+  assert.match(calls(), /pr close 6 --repo o\/r --comment/);
+  assert.doesNotMatch(calls(), /update-branch/);
+});
 
 test("a BEHIND sync PR on a sync branch is updated", async () => {
   reset("BEHIND foreman/sync-main-into-develop");
   assert.equal(await tryMergeSyncPR("o/r", 6, tmpdir(), logger), false);
   assert.match(calls(), /api -X PUT repos\/o\/r\/pulls\/6\/update-branch/);
-});
-
-test("a BEHIND legacy sync PR whose head is the production branch is never updated", async () => {
-  reset("BEHIND main");
-  assert.equal(await tryMergeSyncPR("o/r", 6, tmpdir(), logger), false);
-  assert.doesNotMatch(calls(), /update-branch/);
 });
 
 test("a DIRTY sync PR is not updated", async () => {

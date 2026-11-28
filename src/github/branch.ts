@@ -340,6 +340,7 @@ export async function tryMergeSyncPR(
     // Only a sync branch is updated. An older sync PR whose head is the production branch itself is left
     // alone: updating it would merge the base into production. It is named in the stall warning instead.
     if (state === "BEHIND" && head && head !== productionBranch) await updateBehindBranch(repo, prNumber, cwd, logger);
+    else if (state === "BEHIND" && head === productionBranch) await retireProductionHeadedSyncPR(repo, prNumber, cwd, logger);
     noteMergeRefusal(repo, prNumber, state ?? "UNKNOWN", message, logger);
     return false;
   }
@@ -356,6 +357,20 @@ async function readMergeState(repo: string, prNumber: number, cwd: string): Prom
   }
 }
 
+/**
+ * A sync PR an older Foreman opened with the production branch as its head can never be made current
+ * (updating it would write the base into production). Close it: the next cycle finds no open sync PR and
+ * opens a dedicated one, which can. Nothing is lost: it carried no code, only history alignment.
+ */
+async function retireProductionHeadedSyncPR(repo: string, prNumber: number, cwd: string, logger?: Logger): Promise<void> {
+  try {
+    await ghAsync(["pr", "close", String(prNumber), "--repo", repo, "--comment", "Closed by the Foreman: this sync PR is headed by the production branch and is behind its base, which cannot be updated safely. A sync PR from a dedicated sync branch replaces it on the next cycle."], cwd);
+    logger?.warn(`Sync PR #${prNumber} is production-headed and BEHIND its base — closed; a dedicated sync PR replaces it next cycle`);
+  } catch (err) {
+    logger?.warn(`Sync PR #${prNumber} is production-headed and BEHIND its base and could not be closed: ${err instanceof Error ? err.message : String(err)}`);
+  }
+}
+
 /** Update a BEHIND sync branch (never the production branch); the next cycle's retry merges it. */
 async function updateBehindBranch(repo: string, prNumber: number, cwd: string, logger?: Logger): Promise<void> {
   try {
@@ -367,33 +382,41 @@ async function updateBehindBranch(repo: string, prNumber: number, cwd: string, l
 }
 
 /**
- * A feature PR whose merge is not done and whose head is BEHIND its base is not cleared by waiting: with
- * `strict` branch protection it stays unmergeable until the branch is updated. Only BEHIND is updated; a
- * conflict or a failing check is not fixed by a base merge, and is counted toward the stall warning.
- * The head moves, so the next cycle's review judges the new head and merges it. Returns true when the branch was updated.
+ * One read of every open PR's `mergeStateStatus` against the base, each cycle, whatever the review phase
+ * did or did not admit (a PR with a current approval, or one whose review attempts are spent, is never offered
+ * to a review, yet still has to merge). A feature PR that is BEHIND is updated, because with `strict`
+ * protection waiting never clears it; the updated head's checks run and the next review/merge follows.
+ * Any other structural state (DIRTY, BLOCKED, ...) leaves the branch alone and counts toward the stall
+ * warning. Sync PRs are out of scope: `tryMergeSyncPR` owns them. Returns the PRs it updated.
  */
-export async function recoverBehindPr(repo: string, prNumber: number, cwd: string, logger?: Logger): Promise<boolean> {
-  let state: string | null;
-  try {
-    state = (await ghAsync(["pr", "view", String(prNumber), "--repo", repo, "--json", "mergeStateStatus", "--jq", ".mergeStateStatus"], cwd)).trim() || null;
-  } catch {
-    return false;
+export async function sweepOpenPrStates(repo: string, baseBranch: string, productionBranch: string, cwd: string, logger?: Logger): Promise<number[]> {
+  const out = await ghAsync(["pr", "list", "--repo", repo, "--state", "open", "--base", baseBranch, "--json", "number,headRefName,isDraft,mergeStateStatus", "--limit", "100"], cwd);
+  const prs: { number: number; headRefName: string; isDraft: boolean; mergeStateStatus: string }[] = JSON.parse(out || "[]");
+  const syncHeads = new Set([syncBranchName(productionBranch, baseBranch), productionBranch]);
+  const updated: number[] = [];
+  const seen = new Set<string>();
+  for (const pr of prs) {
+    seen.add(`${repo}#${pr.number}`);
+    if (pr.isDraft || syncHeads.has(pr.headRefName)) continue;
+    const state = pr.mergeStateStatus;
+    if (state === "BEHIND") {
+      try {
+        await ghAsync(["api", "-X", "PUT", `repos/${repo}/pulls/${pr.number}/update-branch`], cwd);
+        logger?.info(`PR #${pr.number} was behind ${baseBranch} — branch updated; its checks and the next review follow`);
+        updated.push(pr.number);
+      } catch (err) {
+        logger?.warn(`PR #${pr.number} is behind ${baseBranch} and the branch update failed: ${err instanceof Error ? err.message : String(err)}`);
+      }
+      noteMergeRefusal(repo, pr.number, "BEHIND", `behind ${baseBranch}`, logger);
+    } else if (state === "CLEAN" || state === "HAS_HOOKS" || state === "UNKNOWN" || !state) {
+      clearMergeRefusal(repo, pr.number);
+    } else {
+      noteMergeRefusal(repo, pr.number, state, `merge state ${state}`, logger);
+    }
   }
-  if (!state) return false;
-  if (state !== "BEHIND") {
-    if (state === "CLEAN") clearMergeRefusal(repo, prNumber);
-    else noteMergeRefusal(repo, prNumber, state, `merge state ${state}`, logger);
-    return false;
-  }
-  try {
-    await ghAsync(["api", "-X", "PUT", `repos/${repo}/pulls/${prNumber}/update-branch`], cwd);
-    logger?.info(`PR #${prNumber} was behind its base — branch updated; the next cycle reviews and merges the new head`);
-    noteMergeRefusal(repo, prNumber, "BEHIND", "behind its base", logger);
-    return true;
-  } catch (err) {
-    logger?.warn(`PR #${prNumber} is behind its base and the branch update failed: ${err instanceof Error ? err.message : String(err)}`);
-    return false;
-  }
+  // A PR no longer open (merged or closed) forgets its history.
+  for (const key of [...refusals.keys()]) if (key.startsWith(`${repo}#`) && !seen.has(key)) refusals.delete(key);
+  return updated;
 }
 
 /** Consecutive cycles a PR has been refused for the same state before the stall is a warning. */

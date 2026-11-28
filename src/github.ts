@@ -99,7 +99,7 @@ export {
   findOpenSyncPR,
   createSyncPR,
   tryMergeSyncPR,
-  recoverBehindPr,
+  sweepOpenPrStates,
 } from "./github/branch.js";
 export {
   dependencyBatchBases,

@@ -446,7 +446,7 @@ export interface CodeHost {
   /** The first-line subjects of the commits in `base..head`, oldest first. Throws on a failed read. */
   commitSubjects(repo: string, base: string, head: string, cwd: string): Promise<string[]>;
   productionDriftFiles(drift: BranchDrift): number;
-  recoverBehindPr(repo: string, prNumber: number, cwd: string, logger?: Logger): Promise<boolean>;
+  sweepOpenPrStates(repo: string, baseBranch: string, productionBranch: string, cwd: string, logger?: Logger): Promise<number[]>;
   tryMergeSyncPR(repo: string, prNumber: number, cwd: string, logger?: Logger, productionBranch?: string): Promise<boolean>;
 
   // Open issues and PRs, labels, errors.
