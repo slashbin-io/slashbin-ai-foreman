@@ -300,11 +300,66 @@ export async function tryMergeSyncPR(
       "--repo", repo,
       "--merge",
     ], cwd);
+    clearMergeRefusal(repo, prNumber);
     return true;
   } catch (err) {
-    // Still blocked (checks pending, conflict, protection). Report at debug so a
-    // normal cycle isn't noisy — the caller reports the durable state.
-    logger?.debug(`Sync PR #${prNumber} not mergeable yet: ${err instanceof Error ? err.message : String(err)}`);
+    // Still blocked (checks pending, conflict, protection). Per cycle that is a debug fact; the
+    // durable state (the same refusal cycle after cycle) is reported by `noteMergeRefusal`.
+    const message = err instanceof Error ? err.message : String(err);
+    logger?.debug(`Sync PR #${prNumber} not mergeable yet: ${message}`);
+    const state = await readMergeState(repo, prNumber, cwd);
+    if (state === "BEHIND") await updateBehindBranch(repo, prNumber, cwd, logger);
+    noteMergeRefusal(repo, prNumber, state ?? "UNKNOWN", message, logger);
     return false;
   }
+}
+
+/** The PR's `mergeStateStatus` (BEHIND, DIRTY, BLOCKED, UNSTABLE, ...); null when it cannot be read. */
+async function readMergeState(repo: string, prNumber: number, cwd: string): Promise<string | null> {
+  try {
+    const out = await ghAsTechLeadAsync(["pr", "view", String(prNumber), "--repo", repo, "--json", "mergeStateStatus", "--jq", ".mergeStateStatus"], cwd);
+    return out.trim() || null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * A refused merge whose head is BEHIND its base is not cleared by waiting: with `strict` branch
+ * protection the merge stays refused until the branch is updated. Only that state is updated;
+ * a conflict or a failing check is not fixed by pushing a base merge onto the branch.
+ * The next cycle's retry merges it.
+ */
+async function updateBehindBranch(repo: string, prNumber: number, cwd: string, logger?: Logger): Promise<void> {
+  try {
+    await ghAsTechLeadAsync(["api", "-X", "PUT", `repos/${repo}/pulls/${prNumber}/update-branch`], cwd);
+    logger?.info(`Sync PR #${prNumber} was behind its base — branch updated, merge retried next cycle`);
+  } catch (err) {
+    logger?.warn(`Sync PR #${prNumber} is behind its base and the branch update failed: ${err instanceof Error ? err.message : String(err)}`);
+  }
+}
+
+/** Consecutive cycles a PR has been refused for the same state before the stall is a warning. */
+export const MERGE_STALL_WARN_CYCLES = 5;
+const refusals = new Map<string, { state: string; cycles: number; since: number }>();
+
+/**
+ * "Not mergeable yet" is a fact about this cycle; a PR refused for the same state across
+ * MERGE_STALL_WARN_CYCLES cycles has not moved. Warn then, and every that-many cycles after,
+ * with the state and how long it has been stuck, at the default log level.
+ */
+export function noteMergeRefusal(repo: string, prNumber: number, state: string, message: string, logger?: Logger, now = Date.now()): void {
+  const key = `${repo}#${prNumber}`;
+  const prev = refusals.get(key);
+  const cur = prev && prev.state === state ? { ...prev, cycles: prev.cycles + 1 } : { state, cycles: 1, since: now };
+  refusals.set(key, cur);
+  if (cur.cycles % MERGE_STALL_WARN_CYCLES === 0) {
+    const minutes = Math.round((now - cur.since) / 60_000);
+    logger?.warn(`Sync PR ${key} refused for ${cur.cycles} consecutive cycles (${minutes} min), merge state ${state}: ${message.split("\n")[0]}`);
+  }
+}
+
+/** Forget a PR's refusal history (it merged). */
+export function clearMergeRefusal(repo: string, prNumber: number): void {
+  refusals.delete(`${repo}#${prNumber}`);
 }

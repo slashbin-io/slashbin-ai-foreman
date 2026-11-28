@@ -128,8 +128,8 @@ export async function ghAsync(args: string[], cwd: string): Promise<string> {
 }
 
 /**
- * Run gh CLI as the Tech Lead (slasbhin-techlead), for exactly two writes on a
- * sync PR the Foreman authored: the approval branch protection needs (the
+ * Run gh CLI as the Tech Lead (slasbhin-techlead), for the writes on a
+ * sync PR the Foreman authored (plus the branch update of a BEHIND one): the approval branch protection needs (the
  * Foreman cannot approve its own PR), and the merge, which must come from an
  * account Railway links to a workspace member or the dev deploy waits for a
  * manual approval. Every approval is the Tech Lead's; the EM coordinates
