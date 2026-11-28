@@ -138,9 +138,10 @@ async function parent() {
   const ok = (x) => !x.error;
 
   const c1 = r.S1.creates[0];
-  check("S1 one issue created, label `pr approved`, body has compare URL and both fixed statements",
+  check("S1 one issue created, label `pr approved`, body has both counts, the compare URL and both fixed statements",
     ok(r.S1) && r.S1.creates.length === 1 && c1.labels.length === 1 && c1.labels[0] === "pr approved" &&
     c1.body.includes(`https://github.com/${REPO}/compare/main...develop`) &&
+    c1.body.includes("4 commit(s) ahead") && c1.body.includes("3 changed file(s)") &&
     c1.body.includes("merged with no Foreman issue") && c1.body.includes("no dev verification ran"), show(r.S1));
   check("S2 handoff already open -> zero creates, one stall comment on it",
     ok(r.S2) && r.S2.creates.length === 0 && r.S2.comments.length === 1 && r.S2.comments[0].n === 50, show(r.S2));
