@@ -4,7 +4,7 @@ import type { RepoConfig } from "../config.js";
 import type { Logger } from "../logger.js";
 import { fleetState } from "../github-state.js";
 import { ghAsync } from "./gh.js";
-import { isForemanOwnedHead } from "../foreman-branch.js";
+import { isForemanFeatureHead } from "../foreman-branch.js";
 import type { IssueSnapshot, PrSnapshot, GhFailure } from "../code-host.js";
 export type { IssueSnapshot, PrSnapshot, GhFailure } from "../code-host.js";
 
@@ -275,13 +275,13 @@ export async function findOpenPrs(
 }
 
 /**
- * Open PRs into `config.baseBranch` whose head is Foreman-owned (branchPrefix, or the legacy
- * featureBranch), newest first. The ONE way the Foreman finds its own PRs (#208): a human-named
+ * Open feature PRs into `config.baseBranch`: a Foreman-owned head (branchPrefix, or the legacy
+ * featureBranch) that is not the sync branch (`isForemanFeatureHead`), newest first. The ONE way the Foreman finds its own PRs (#208): a human-named
  * head never appears here, so nothing downstream can revise, reconcile or push to it.
  */
 export async function findOpenForemanPrs(config: RepoConfig, limit?: number): Promise<PrSnapshot[]> {
   const matches = (await getOpenPrs(config.githubRepo, config.repoPath))
-    .filter((p) => p.baseRefName === config.baseBranch && isForemanOwnedHead(config, p.headRefName));
+    .filter((p) => p.baseRefName === config.baseBranch && isForemanFeatureHead(config, p.headRefName));
   return limit === undefined ? matches : matches.slice(0, limit);
 }
 
@@ -291,7 +291,7 @@ export async function knownOpenForemanPr(
 ): Promise<{ number: number; url: string; headRefOid: string; headRefName: string } | undefined> {
   if (reads.ttlMs <= 0 || !fleetState.isEnabled(config.githubRepo)) return undefined;
   const pr = (await fleetState.openPrs(config.githubRepo))
-    .find((p) => p.baseRefName === config.baseBranch && isForemanOwnedHead(config, p.headRefName));
+    .find((p) => p.baseRefName === config.baseBranch && isForemanFeatureHead(config, p.headRefName));
   return pr ? { number: pr.number, url: pr.url, headRefOid: pr.headRefOid, headRefName: pr.headRefName } : undefined;
 }
 
@@ -299,7 +299,7 @@ export async function knownOpenForemanPr(
 export async function openForemanPrVersion(config: RepoConfig): Promise<string | null> {
   if (reads.ttlMs <= 0 || !fleetState.isEnabled(config.githubRepo)) return null;
   const pr = (await fleetState.openPrs(config.githubRepo))
-    .find((p) => p.baseRefName === config.baseBranch && isForemanOwnedHead(config, p.headRefName));
+    .find((p) => p.baseRefName === config.baseBranch && isForemanFeatureHead(config, p.headRefName));
   return pr ? `${pr.number}:${pr.headRefOid}@${pr.updatedAt}` : null;
 }
 

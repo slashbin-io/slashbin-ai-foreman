@@ -9,7 +9,7 @@ import { execFileSync } from "node:child_process";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { tmpdir } from "node:os";
-import { isForemanOwnedHead, isLegacyFeatureHead, slugify, foremanBranchName, branchPrefixOf } from "../dist/foreman-branch.js";
+import { isForemanOwnedHead, isForemanFeatureHead, isLegacyFeatureHead, slugify, foremanBranchName, branchPrefixOf } from "../dist/foreman-branch.js";
 import { loadConfig } from "../dist/config.js";
 import { configureIssueCache } from "../dist/github.js";
 import { findOpenForemanPrs } from "../dist/github/cache.js";
@@ -131,6 +131,18 @@ beforeEach(() => arrange([]));
 test("the Foreman finds per-issue and legacy PRs into the base, never a human's", async () => {
   arrange([pr(1, "alice/fix-x"), pr(2, "foreman/2-thing"), pr(3, "features"), pr(4, "foreman/4-other", "main"), pr(5, "dependabot/npm/x")]);
   assert.deepEqual((await findOpenForemanPrs(repo())).map((p) => p.number), [2, 3]);
+});
+
+test("a sync PR is Foreman-owned but never the feature PR: it holds no build slot and gets no revision", async () => {
+  assert.equal(isForemanOwnedHead(cfg, "foreman/sync-main-into-develop"), true, "still owned: never treated as a person's");
+  assert.equal(isForemanFeatureHead(cfg, "foreman/sync-main-into-develop"), false);
+  assert.equal(isForemanFeatureHead(cfg, "foreman/73-a-feature"), true);
+  // Newest first, as GitHub lists them: the sync PR (#75) opened after the feature PR (#73).
+  arrange([pr(75, "foreman/sync-main-into-develop"), pr(73, "foreman/9-a-buyer-s-draft")]);
+  assert.deepEqual((await findOpenForemanPrs(repo())).map((p) => p.number), [73]);
+  assert.equal((await findOpenFeaturePR(repo()))?.number, 73);
+  arrange([pr(75, "foreman/sync-main-into-develop")]);
+  assert.equal(await findOpenFeaturePR(repo()), null, "an open sync PR alone leaves the build slot free");
 });
 
 test("a legacy features -> develop PR is still found (head and issues), so review, revise and verify still see it", async () => {

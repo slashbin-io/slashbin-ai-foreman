@@ -2,6 +2,7 @@
 
 import type { Logger } from "../logger.js";
 import { findOpenPrs, formatGhError } from "./cache.js";
+import { syncBranchName } from "../foreman-branch.js";
 import { ghAsync, ghAsTechLeadAsync, ghHttpStatus, isBackoffRefusal } from "./gh.js";
 import { DEFAULT_GITHUB_CONVENTIONS, fillTitle, signed, type GithubConventions } from "./conventions.js";
 import { OpenPromotionPR } from "./promotion.js";
@@ -187,9 +188,7 @@ export async function findOpenSyncPR(
  * has any commit production lacks, which `strict` branch protection refuses for good, and updating it would
  * merge the base into production. This branch can be updated safely; production is never written.
  */
-export function syncBranchName(productionBranch: string, baseBranch: string): string {
-  return `foreman/sync-${productionBranch}-into-${baseBranch}`;
-}
+export { syncBranchName };
 
 /** Cut the sync branch from the base's tip (moving a leftover one there) and merge production into it. */
 async function prepareSyncBranch(repo: string, productionBranch: string, baseBranch: string, cwd: string): Promise<string> {
