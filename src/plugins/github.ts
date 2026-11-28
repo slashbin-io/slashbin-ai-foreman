@@ -98,7 +98,6 @@ export function githubCodeHost(
     openIssueLabels: cache.openIssueLabels,
     bounceForRedCI: ciGate.bounceForRedCI,
     commentOnIssue: ciGate.commentOnIssue,
-    wentThroughRelease: evidence.wentThroughRelease,
     lastIssueActivity: evidence.lastIssueActivity,
     retireLabelledIssue: evidence.retireLabelledIssue,
     countCiBouncesSinceReview: ciGate.countCiBouncesSinceReview,

@@ -40,7 +40,7 @@ export interface EvidenceExpiryDeps {
   /** The newest timeline event's time (ms); null when it cannot be read (the card is left alone). */
   newestEventAt(card: number): Promise<number | null>;
   readBody(card: number): Promise<string>;
-  /** Whether the card went through a release (its timeline applied a release-stage label). */
+  /** Whether the card is named in a merged production promotion (it shipped). */
   shipped(card: number): Promise<boolean>;
   epicOf(body: string): number | null;
   fileFollowUp(input: VerifyFollowUpInput): Promise<VerifyFollowUpOutcome>;

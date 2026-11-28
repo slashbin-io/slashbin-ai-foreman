@@ -26,15 +26,3 @@ export async function retireLabelledIssue(config: RepoConfig, num: number, label
     return false;
   }
 }
-
-/**
- * Whether issue `num` went through a release: its timeline shows one of `releaseLabels` being applied (the labels from the
- * EM's release authorization on). The Foreman writes those itself, so there is no PR to match by keyword, no search window
- * and no API node cap; a merge to develop alone never applies them. Throws on a failed read.
- */
-export async function wentThroughRelease(config: RepoConfig, num: number, releaseLabels: string[]): Promise<boolean> {
-  const out = await ghAsync(["api", "--paginate", `repos/${config.githubRepo}/issues/${num}/timeline?per_page=100`,
-    "--jq", '.[] | select(.event == "labeled") | .label.name'], config.repoPath);
-  const names = new Set(out.split("\n").map((l) => l.trim()).filter(Boolean));
-  return releaseLabels.some((l) => names.has(l));
-}
