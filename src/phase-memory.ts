@@ -18,8 +18,6 @@ export class PhaseMemory {
    * label strip failed is seen again next cycle. An observer gets each once.
    */
   readonly observerEventsSent = new Set<string>();
-  /** `<owner/repo>#<pr>@<head>` -> how many times the review intake offered that head to the Tech Lead (review-intake.ts). */
-  readonly reviewIntakeAttempts = new Map<string, number>();
   /**
    * Per repo, the issues held in the build queue and what holds them (an open
    * feature PR, or a merge awaiting dev verification). Observers hear "queued"

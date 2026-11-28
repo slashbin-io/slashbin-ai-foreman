@@ -287,6 +287,8 @@ export type WorkEvent =
   | { readonly kind: "release"; readonly release: ReleaseEvent }
   /** Promotion on `repo` is stalled for `detail`, or no longer stalled (null). */
   | { readonly kind: "promotionStall"; readonly repo: string; readonly detail: string | null }
+  /** A repo-level fact observers should hear once (e.g. `ruleset-drift`); it belongs to no card. */
+  | { readonly kind: "repoNotice"; readonly repo: string; readonly notice: string; readonly detail: string }
   /** An upstream (github / claude) started refusing work (`reason`), or stopped. */
   | { readonly kind: "backoff"; readonly upstream: string; readonly paused: boolean; readonly reason?: string }
   /** The repo's open items at the end of a cycle, as the source shows them: the record a mirror reconciles to. */

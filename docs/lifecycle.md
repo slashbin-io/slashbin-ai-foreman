@@ -285,5 +285,6 @@ The full `WorkEvent` contract (`src/adapters.ts`). Only `transition` writes to t
 | `waiting` | Items the Foreman is holding, and on what (an occupied branch, a back-off). |
 | `release` | A release PR opened, merged or closed, with the items it carries. |
 | `promotionStall` | Promotion is stuck (the base branch is ahead of production and nothing is marked ready), or cleared. |
+| `repoNotice` | A repo-level fact observers hear once, such as a review-only repo whose rulesets do not require the review status; it belongs to no card. |
 | `backoff` | A daemon-wide pause on an upstream (GitHub rate limit, Claude session limit) began or ended. |
 | `snapshot` | After each pass: every open item's stage as the work source sees it, so a plugin can heal drift. |

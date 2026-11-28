@@ -18,6 +18,7 @@ const ago = (ms) => new Date(NOW - ms).toISOString();
 /** Fakes that record every call; `status` is what the head's `techlead/review` status reads. */
 function fakes({ mode = "review-only", registryDown = false, status = null, required = true } = {}) {
   const calls = { offered: [], statusReads: [], writes: 0 };
+  const ledger = new Map();
   return {
     calls,
     deps: {
@@ -29,6 +30,14 @@ function fakes({ mode = "review-only", registryDown = false, status = null, requ
       },
       async reviewHead(_r, pr, sha) { calls.offered.push([pr, sha]); return { kind: "done" }; },
       now: () => NOW,
+      async admit(_r, pr, sha) {
+        const k = `${pr}@${sha}`;
+        const n = ledger.get(k) ?? 0;
+        if (n >= 3) return { status: "held", count: n, first: n === 3, since: "" };
+        ledger.set(k, n + 1);
+        return { status: "admitted", count: n + 1 };
+      },
+      async refund(_r, pr, sha) { const k = `${pr}@${sha}`; ledger.set(k, (ledger.get(k) ?? 1) - 1); },
     },
   };
 }
@@ -73,6 +82,9 @@ test("(e) an incomplete-review failure is offered again, at most MAX_REVIEW_ATTE
   const rt = new ForemanRuntime();
   for (let i = 0; i < 5; i++) await runReviewIntake(rt, repo, config, logger, [], f.deps);
   assert.equal(f.calls.offered.length, 3);
+  // The ledger is the PR record, not process memory: a restarted Foreman (a new runtime) gets no fresh attempts.
+  await runReviewIntake(new ForemanRuntime(), repo, config, logger, [], f.deps);
+  assert.equal(f.calls.offered.length, 3);
 });
 
 test("(f) an unreachable registry skips the repo and writes nothing", async () => {
@@ -106,7 +118,28 @@ test("ruleset drift: no ruleset requiring the status posts one notice per repo, 
   await runReviewIntake(rt, repo, config, logger, events, f.deps);
   await runReviewIntake(rt, repo, config, logger, events, f.deps);
   assert.equal(events.filter((e) => /no active ruleset requires/.test(e.message)).length, 1);
+  assert.ok(rt.memory.observerEventsSent.has("ruleset-drift:o/svc"), "observers were told once through the notice path");
   assert.equal(f.calls.offered.length, 2);
+});
+
+test("an attempt that cannot be recorded means no review this pass", async () => {
+  const f = fakes();
+  f.deps.admit = async () => ({ status: "unavailable" });
+  assert.equal(await run(f), false);
+  assert.deepEqual(f.calls.offered, []);
+});
+
+test("the GitHub reads follow every page: heads past 200 PRs, a verdict behind 30 newer statuses", async () => {
+  const { readFileSync } = await import("node:fs");
+  const src = readFileSync(new URL("../src/github/review-intake-reads.ts", import.meta.url), "utf8");
+  assert.equal((src.match(/"--paginate"/g) ?? []).length, 2, "both the PR list and the status list are paginated");
+  assert.doesNotMatch(src, /--limit/);
+});
+
+test("the registry reader is installed by loading the paperclip module, with no plugin started", async () => {
+  await import("../dist/plugins/paperclip.js");
+  const { repoProcessMode } = await import("../dist/plugins/registry.js");
+  await assert.rejects(repoProcessMode({ paperclip: {} }, "o/svc"), /no registry configured/);
 });
 
 test("needsReview: no status, young pending, success, verdict and incomplete failures", () => {

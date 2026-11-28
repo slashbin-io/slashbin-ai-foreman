@@ -22,7 +22,8 @@ import type { HeadReview } from "./plugins/contract.js";
 import { codeHost, roleFor, repoProcessMode } from "./plugins/registry.js";
 import type { CycleEvent } from "./phases/common.js";
 import type { ForemanRuntime } from "./runtime.js";
-import { MAX_REVIEW_ATTEMPTS_PER_HEAD } from "./step-attempts.js";
+import { MAX_REVIEW_ATTEMPTS_PER_HEAD, type Admission } from "./step-attempts.js";
+import { notifyRepoOnce } from "./phases/common.js";
 
 /** The commit-status context the Tech Lead writes. */
 export const REVIEW_STATUS_CONTEXT = "techlead/review";
@@ -39,15 +40,21 @@ export interface ReviewIntakeDeps {
   host: Pick<CodeHost, "listOpenPrHeads" | "readHeadStatus" | "requiresStatusCheck">;
   reviewHead: ((repo: RepoConfig, pr: number, sha: string, logger: Logger) => Promise<HeadReview>) | undefined;
   now(): number;
+  /** Records an attempt on the PR's durable record BEFORE the review is offered; `held` at the cap, `unavailable` when it cannot be recorded. */
+  admit(repoConfig: RepoConfig, pr: number, sha: string): Promise<Admission>;
+  /** Gives back an admitted attempt that wrote nothing. */
+  refund(repoConfig: RepoConfig, pr: number, sha: string): Promise<void>;
 }
 
-function defaultDeps(config: AgentConfig): ReviewIntakeDeps {
+function defaultDeps(config: AgentConfig, rt: ForemanRuntime): ReviewIntakeDeps {
   const reviewer = roleFor("reviewer", config);
   return {
     processMode: (githubRepo) => repoProcessMode(config, githubRepo),
     host: codeHost(),
     reviewHead: reviewer?.reviewHead ? (repo, pr, sha, logger) => reviewer.reviewHead!(repo, config, pr, sha, logger) : undefined,
     now: Date.now,
+    admit: (repoConfig, pr, sha) => rt.attempts.admit(repoConfig, pr, "review", sha, MAX_REVIEW_ATTEMPTS_PER_HEAD),
+    refund: (repoConfig, pr, sha) => rt.attempts.refund(repoConfig, pr, "review", sha),
   };
 }
 
@@ -73,7 +80,7 @@ export async function runReviewIntake(
   config: AgentConfig,
   logger: Logger,
   events?: CycleEvent[],
-  deps: ReviewIntakeDeps = defaultDeps(config),
+  deps: ReviewIntakeDeps = defaultDeps(config, rt),
 ): Promise<boolean> {
   const repo = repoConfig.githubRepo;
   let mode: string | null;
@@ -92,11 +99,8 @@ export async function runReviewIntake(
   try {
     if (!(await deps.host.requiresStatusCheck(repoConfig, REVIEW_STATUS_CONTEXT, logger))) {
       // Drift notice, once per repo: the review still starts, but no ruleset makes its status a merge gate.
-      const key = `ruleset-drift:${repo}`;
-      if (!rt.memory.observerEventsSent.has(key)) {
-        rt.memory.observerEventsSent.add(key);
-        events?.push({ message: `${repo} is review-only but no active ruleset requires ${REVIEW_STATUS_CONTEXT}: reviews still start, yet nothing blocks a merge without one`, level: "warn" });
-      }
+      const detail = `${repo} is review-only but no active ruleset requires ${REVIEW_STATUS_CONTEXT}: reviews still start, yet nothing blocks a merge without one`;
+      if (await notifyRepoOnce(rt, "ruleset-drift", repoConfig, detail, logger)) events?.push({ message: detail, level: "warn" });
     }
   } catch (err) {
     logger.debug(`Review intake could not read ${repo}'s rulesets: ${err instanceof Error ? err.message : String(err)}`);
@@ -120,13 +124,16 @@ export async function runReviewIntake(
     }
     if (!needsReview(status, deps.now(), config.reviewMaxDurationMs)) continue;
 
-    const attemptKey = `${repo}#${number}@${sha}`;
-    const tried = rt.memory.reviewIntakeAttempts.get(attemptKey) ?? 0;
-    if (tried >= MAX_REVIEW_ATTEMPTS_PER_HEAD) {
-      const noted = `intake-capped:${attemptKey}`;
+    const admission = await deps.admit(repoConfig, number, sha);
+    if (admission.status === "unavailable") {
+      logger.info(`Review intake: attempts for ${repo} PR #${number} cannot be recorded; no review this pass`);
+      continue;
+    }
+    if (admission.status === "held") {
+      const noted = `intake-capped:${repo}#${number}@${sha}`;
       if (!rt.memory.observerEventsSent.has(noted)) {
         rt.memory.observerEventsSent.add(noted);
-        events?.push({ message: `${repo} PR #${number} head ${sha.slice(0, 10)} was offered to the Tech Lead ${tried} times without a finished review; it waits for a new head`, level: "warn" });
+        events?.push({ message: `${repo} PR #${number} head ${sha.slice(0, 10)} was offered to the Tech Lead ${admission.count} times without a finished review; it waits for a new head`, level: "warn" });
       }
       continue;
     }
@@ -134,10 +141,10 @@ export async function runReviewIntake(
     const out = await deps.reviewHead(repoConfig, number, sha, logger);
     if (out.kind === "retry") {
       // The reviewer wrote nothing: not an attempt. Ask again on a later pass.
+      await deps.refund(repoConfig, number, sha);
       logger.info(`Tech Lead could not take ${repo} PR #${number}: ${out.reason}; retried later`);
       return false;
     }
-    rt.memory.reviewIntakeAttempts.set(attemptKey, tried + 1);
     if (out.kind === "done") {
       events?.push({ message: `Review started for ${repo} PR #${number} head ${sha.slice(0, 10)}`, level: "info" });
       return true;

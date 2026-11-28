@@ -162,6 +162,15 @@ export async function notifyOnce(
   }
 }
 
+/** Tell observers one repo-level notice, once per (kind, repo). Resolves whether this call sent it. */
+export async function notifyRepoOnce(rt: ForemanRuntime, kind: string, repoConfig: RepoConfig, detail: string, logger: Logger): Promise<boolean> {
+  const key = `${kind}:${repoConfig.githubRepo}`;
+  if (rt.memory.observerEventsSent.has(key)) return false;
+  rt.memory.observerEventsSent.add(key);
+  await emit(rt, { kind: "repoNotice", repo: repoConfig.githubRepo, notice: kind, detail }, null, logger);
+  return true;
+}
+
 // Agent runs in flight: each run's controller → its repo name. Repos progress
 // CONCURRENTLY, so "the" in-flight run stopped being a single thing; a lone
 // `abortController` would have tracked whichever repo started last and let a

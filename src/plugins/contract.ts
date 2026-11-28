@@ -390,6 +390,4 @@ export interface ForemanPlugin {
   readonly qa?: QaRunner;
   readonly unstick?: Unsticker;
   readonly changeSignal?: ChangeSignal;
-  /** The delivery process mode the company registry holds for a repo (e.g. `review-only`); throws when it cannot be read. */
-  repoProcessMode?(config: AgentConfig, githubRepo: string): Promise<string | null>;
 }
