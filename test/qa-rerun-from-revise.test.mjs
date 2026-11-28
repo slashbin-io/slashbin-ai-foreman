@@ -191,3 +191,35 @@ test("qaBeforeMerge off: a re-run comment is ignored by revise", async () => {
   assert.ok(await pendingPass(config, 1));
   assert.equal(claudeRuns(), 1);
 });
+
+// foreman#439: an EM scope ruling posted while the no-commit streak is at 1 (not yet a stalemate) never cleared it,
+// so the reviser's correct no-commit answer to the ruling was counted as the second and re-blocked the card.
+const ruledAt = "2099-01-01T00:00:00Z";
+const scopeRuling = (when) => ({ at: when, head: "**EM scope ruling: the head meets it.**", body: "**EM scope ruling: the head meets it.**" });
+const blocked = (events) => events.some((e) => /answered \d+ review rounds with no code change/.test(e.message));
+
+test("a ruling posted at no-commit count 1 clears the streak: the ruled no-commit answer returns to review, not a stalemate", async () => {
+  const config = load();
+  const repo = config.repos[0];
+  labelIssue(LABELS.pending);
+  world({ comments: [scopeRuling(ruledAt)] });
+  await rt.streaks.record(repo, PR, SHA, undefined);
+  assert.equal((await rt.streaks.read(repo, PR)).streak.count, 1);
+  const events = [];
+  await tryRevision(rt, repo, config, logger, 1, events);
+  assert.equal(claudeRuns(), 1, "the ruled revise ran");
+  assert.ok(!blocked(events), `not re-blocked: ${JSON.stringify(events)}`);
+  assert.ok(movedToReview(), `back to review, got ${edits().join(" | ")}`);
+  assert.equal((await prRecordOf(rt, repo, PR)).noCommit.count, 1, "the ruled answer is a first no-commit");
+});
+
+test("a ruling OLDER than the count-1 streak does not clear it: the second no-commit still blocks", async () => {
+  const config = load();
+  const repo = config.repos[0];
+  labelIssue(LABELS.pending);
+  world({ comments: [scopeRuling("2020-01-01T00:00:00Z")] });
+  await rt.streaks.record(repo, PR, SHA, undefined);
+  const events = [];
+  await tryRevision(rt, repo, config, logger, 1, events);
+  assert.ok(blocked(events), "an answered ruling never releases again");
+});

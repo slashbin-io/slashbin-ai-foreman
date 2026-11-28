@@ -143,6 +143,15 @@ export async function tryRevision(
   // rounds (2026-10-13) because each fix answered the last finding and the
   // spec question underneath reached no one who owned the spec.
   const ruling = await codeHost().readRulingState(repoConfig.githubRepo, pending.pr.number, repoConfig.repoPath, revLogger);
+  // A ruling is a new spec the head is re-judged against, not only a release for a stalemate: one posted after
+  // the last counted no-commit round clears the streak at any count, so the ruled revise starts from 0 and a
+  // correct no-commit answer to it is a first one (it returns to review) instead of the second (EM ruling again).
+  if (streak && streak.count > 0 && rulingAnswersStalemate(ruling.rulingAt, streak.at ?? ruling.latestReviewAt)) {
+    if (await rt.streaks.clear(repoConfig, prNumber)) {
+      revLogger.info(`PR #${prNumber}: an EM scope ruling is newer than its no-commit streak (count ${streak.count}) — streak cleared`);
+      streak = undefined;
+    }
+  }
   if (ruling.roundsSinceRuling >= REVIEW_ROUNDS_ALERT || ruling.escalateRequested) {
     const roundsKey = `${repoConfig.githubRepo}#${pending.pr.number}@${ruling.latestReviewId ?? "none"}`;
     if (!rt.memory.reviewRoundsAlerted.has(roundsKey)) {
