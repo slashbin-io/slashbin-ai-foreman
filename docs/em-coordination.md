@@ -138,6 +138,11 @@ itself when its check turns true):
 | `revision-exhausted` | revise failed twice | `prHeadMoved` | rule on scope or file the fix |
 | `revision-stalemate` | revise made no commit twice on the same PR head (kept across restarts and idle passes; cleared by a push, the PR closing, or an `**EM scope ruling` PR comment newer than the last no-commit round, which buys one more revise) | `prHeadMoved`, `rulingPosted` | rule on scope |
 
+A hold that stands on one PR (`revision-exhausted`, `revision-stalemate`, and the unstick kind `needs-ruling`) also ends
+when that PR is no longer open: merged or closed, the unstick stage releases it (`releaseClosedPrHolds`, `src/phases/unstick.ts`),
+moving the card out of Blocked and dropping the question, so the EM is not asked about a PR that already shipped.
+With another blocker standing on the issue, only the PR's question is dropped and the card stays Blocked. An unreadable PR keeps the hold.
+
 Release-stage stops (`DEPLOY_STOPS`, `src/phases/release.ts`): **`predeploy-stop`,
 `merge-refused-repeatedly`, `merge-blocked-check`** each label the release's issues
 `blocked`. Read the SRE's reason and get it fixed. Every other deploy hold is

@@ -31,15 +31,15 @@ import type { UnstickOutcome, Unsticker } from "../plugins/contract.js";
 import { fieldTable, type IssueRecord, type IssueRecords, type RepoRecord } from "../issue-records.js";
 import { isUpstreamBlocked, reportRunResult, tryAcquire } from "../upstream-backoff.js";
 import { backoffDelay } from "../backoff.js";
-import { EVENT_KINDS, lifecycleOf, noticeHandled, noticeTaken, nextDecompose, decomposeInFlight, releaseGateCandidateReason, releaseNotBefore, UNSTICK_MAX_ATTEMPTS, SPENT_QUESTION_REARM, handoffGiveUpComment, unstickGiveUpComment, derivedCandidates, nextStep, openEntry, unstickKey, type DecomposeCandidate, type UnstickCandidate, type UnstickEntry } from "../unstick.js";
-import { asActiveRun } from "./common.js";
+import { EVENT_KINDS, lifecycleOf, noticeHandled, noticeTaken, nextDecompose, decomposeInFlight, releaseGateCandidateReason, releaseNotBefore, UNSTICK_MAX_ATTEMPTS, SPENT_QUESTION_REARM, handoffGiveUpComment, unstickGiveUpComment, derivedCandidates, nextStep, openEntry, prHoldPr, unstickKey, type DecomposeCandidate, type UnstickCandidate, type UnstickEntry } from "../unstick.js";
+import { asActiveRun, itemOf } from "./common.js";
 import { report as reportStall, resolve as resolveStall, sweep as sweepStalls, unresolvedStalls, stallClockEnabled } from "../stall-clock.js";
 import { isDeployFailureHold, devVerifyHolding } from "./verify.js";
 import { unlinkedFixPremise } from "./implement.js";
 import { codeHost } from "../plugins/registry.js";
 import type { CodeHost } from "../code-host.js";
 import type { ForemanRuntime } from "../runtime.js";
-import { workSourceFor } from "../work-source.js";
+import { emit, workSourceFor } from "../work-source.js";
 import { planStageStalls } from "../stage-stalls.js";
 import type { StageOrDone } from "../lifecycle.js";
 
@@ -352,6 +352,40 @@ async function withdrawStaleUnlinkedFixes(rt: ForemanRuntime, repoConfig: RepoCo
   }
 }
 
+/**
+ * Release each PR hold (`revision-stalemate`, `revision-exhausted`, `needs-ruling`) whose PR is no longer open. Those
+ * holds clear only from the PR (a push, a ruling), so a merge or a close left them standing: the card stayed in Blocked
+ * after the work shipped and the EM was asked again about a question nobody could answer (2026-11-28, a docs card). With no
+ * other blocker standing on the issue, the release is an `unblocked` event, which moves the card back to the column its
+ * labels call for and clears the question; otherwise only this question is dropped. An unreadable PR keeps the hold.
+ */
+async function releaseClosedPrHolds(rt: ForemanRuntime, repoConfig: RepoConfig, loaded: IssueRecords, log: Logger): Promise<void> {
+  const openByPr = new Map<number, boolean | null>();
+  for (const [n, r] of loaded.records) {
+    const table = r.unstick ?? {};
+    const gone: string[] = [];
+    const prs = new Set<number>();
+    for (const [key, e] of Object.entries(table)) {
+      const pr = prHoldPr(e);
+      if (pr === null) continue;
+      if (!openByPr.has(pr)) openByPr.set(pr, await codeHost().isPrOpen(repoConfig.githubRepo, pr, repoConfig.repoPath));
+      if (openByPr.get(pr) === false) { gone.push(key); prs.add(pr); }
+    }
+    if (gone.length === 0) continue;
+    const others = Object.entries(table).some(([key, e]) => !gone.includes(key) && lifecycleOf(e.kind) === "blocker");
+    const names = [...prs].map((p) => `PR #${p}`).join(", ");
+    if (others) {
+      if (!await mutate(rt, repoConfig, n, (t) => { for (const key of gone) delete t[key]; })) continue;
+      for (const key of gone) delete r.unstick?.[key];
+      log.info(`#${n}: the hold on ${names} is dropped — the PR is no longer open; another hold still stands`);
+      continue;
+    }
+    await emit(rt, { kind: "unblocked", item: itemOf(repoConfig, n), reason: `unblocked: ${names} is no longer open (merged or closed) — its hold is over` }, repoConfig, log);
+    delete r.unstick;
+    log.info(`#${n}: released — ${names} is no longer open, so its hold is over`);
+  }
+}
+
 /** Returns how many EM calls this pass made. Never throws. */
 export async function tryUnstick(
   rt: ForemanRuntime,
@@ -396,6 +430,7 @@ export async function tryUnstick(
     // The epics' own records: their `stalled` questions are delivered from here, to the epic's repo and number.
     const epicLoaded = home && epics.length > 0 ? await rt.records.loadIssueRecords(home, new Set(epics)) : null;
     await withdrawStaleUnlinkedFixes(rt, repoConfig, config, issues, loaded, log);
+    await releaseClosedPrHolds(rt, repoConfig, loaded, log);
     const homeOf = new Map<UnstickCandidate, RepoConfig>();
     const epicCandidates: UnstickCandidate[] = [];
     for (const r of epicLoaded?.records.values() ?? []) {
