@@ -49,14 +49,18 @@ test("the sweep never updates a sync PR, production-headed or on a sync branch",
   assert.doesNotMatch(calls(), /update-branch/);
 });
 
-test("a feature PR that stays DIRTY warns on its fifth consecutive sweep, naming the state and count", async () => {
-  reset("");
-  list([21, "DIRTY"]);
-  for (let i = 0; i < MERGE_STALL_WARN_CYCLES; i++) await sweepOpenPrStates("o/r", "develop", "main", tmpdir(), logger);
-  assert.equal(lines.warn.length, 1);
-  assert.match(lines.warn[0], /#21 refused for 5 consecutive cycles .*DIRTY/);
-  assert.doesNotMatch(calls(), /update-branch/);
-});
+// The sweep reads only `mergeStateStatus`: a PR the review will not be offered again (a current approval,
+// spent attempts) is observed exactly like any other.
+for (const [state, pr] of [["DIRTY", 21], ["BLOCKED", 22]]) {
+  test(`an approved feature PR that stays ${state} warns once on its fifth consecutive sweep, naming state and count`, async () => {
+    reset("");
+    list([pr, state]);
+    for (let i = 0; i < MERGE_STALL_WARN_CYCLES; i++) await sweepOpenPrStates("o/r", "develop", "main", tmpdir(), logger);
+    assert.equal(lines.warn.length, 1);
+    assert.match(lines.warn[0], new RegExp(`#${pr} refused for 5 consecutive cycles .*${state}`));
+    assert.doesNotMatch(calls(), /update-branch/);
+  });
+}
 
 test("a BEHIND sync PR headed by the production branch is closed so a dedicated one replaces it", async () => {
   reset("BEHIND main");
