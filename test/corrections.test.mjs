@@ -387,3 +387,17 @@ test("the build picker asks the release hold with the verification hold's fixes,
   assert.match(src, /const releaseFixes = featurePr \? \[\] : await releaseHeldFixes\(rt, repoConfig, everyCandidate, repoLogger\)/);
   assert.match(src, /\[\.\.\.new Set\(\[\.\.\.verifyFixes, \.\.\.releaseFixes\]\)\]/);
 });
+
+test("the release hold reads each candidate's relations once, however many issues the release holds unsigned", async () => {
+  const h = releaseHarness([10, 11, 12, 13, 14, 15]);
+  try {
+    const dir = fakeGh(UNTITLED, {});
+    await withGh(dir, async (cfg) => {
+      await releaseHeldFixes(h.rt, cfg, QUEUE, h.logger);
+    });
+    const reads = readFileSync(join(dir, "calls"), "utf8").split("\n").filter((l) => /\/dependencies\/blocking|\/parent/.test(l));
+    assert.equal(reads.length, QUEUE.length * 2, "one blocking read and one parent read per candidate, not per holder");
+  } finally {
+    setCodeHost(null);
+  }
+});

@@ -222,10 +222,12 @@ export function unlinkedFixPremise(holder: number, held: number | null | undefin
  */
 export async function fixesForHold(
   rt: ForemanRuntime, repoConfig: RepoConfig, holder: number, verifying: number | null, candidates: readonly number[], logger: Logger,
+  /** The candidates' relations when the caller already read them (several holders, one read each). */
+  known?: ReadonlyMap<number, Relation>,
 ): Promise<number[]> {
   let relations;
   try {
-    relations = await codeHost().relationsOf(repoConfig, candidates, logger);
+    relations = known ?? await codeHost().relationsOf(repoConfig, candidates, logger);
   } catch (err) {
     logger.warn(`#${holder}: its corrections could not be read (${(err instanceof Error ? err.message : String(err)).split("\n")[0]}) — building in queue order`);
     return [];
@@ -277,9 +279,18 @@ export async function releaseHeldFixes(
     logger.warn(`The release hold could not be read (${(err instanceof Error ? err.message : String(err)).split("\n")[0]}) — building in queue order`);
     return [];
   }
+  if (unsigned.length === 0) return [];
+  // One read of every candidate's relations serves every holder: the work is linear in holders plus candidates.
+  let relations: Map<number, Relation>;
+  try {
+    relations = await codeHost().relationsOf(repoConfig, candidates, logger);
+  } catch (err) {
+    logger.warn(`The release hold's corrections could not be read (${(err instanceof Error ? err.message : String(err)).split("\n")[0]}) — building in queue order`);
+    return [];
+  }
   const fixes = new Set<number>();
   for (const holder of unsigned) {
-    for (const n of await fixesForHold(rt, repoConfig, holder, null, candidates.filter((c) => c !== holder), logger)) fixes.add(n);
+    for (const n of await fixesForHold(rt, repoConfig, holder, null, candidates.filter((c) => c !== holder), logger, relations)) fixes.add(n);
   }
   return [...fixes];
 }
