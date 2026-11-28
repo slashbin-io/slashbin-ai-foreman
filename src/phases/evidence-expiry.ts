@@ -9,6 +9,23 @@
 import type { VerifyFollowUpInput, VerifyFollowUpOutcome } from "../plugins/contract.js";
 import type { Logger } from "../logger.js";
 import { formatWait } from "../backoff.js";
+import { releaseIssues } from "../release-tracker.js";
+
+/** How many of the latest merged production promotions are read for "shipped". A card in none of them is unknown, not shipped. */
+export const PROMOTION_WINDOW = 50;
+
+/**
+ * The `shipped` check: a card is shipped only when a merged production promotion's body names it (a `- #N` manifest line, read by `releaseIssues`). The window is read once, on first use. A card merged only to the base branch is in no promotion, and one older
+ * than the window is unknown: both read as not shipped, so they get the follow-up and are never closed. A failed read throws.
+ */
+export function shippedInPromotions(listPromotions: (limit: number) => Promise<{ body: string }[]>): (card: number) => Promise<boolean> {
+  let named: Promise<Set<number>> | null = null;
+  return async (card) => {
+    named ??= listPromotions(PROMOTION_WINDOW).then((prs) =>
+      new Set(prs.flatMap((p) => releaseIssues(p.body))));
+    return (await named).has(card);
+  };
+}
 
 export const AWAITING_EVIDENCE_LABEL = "awaiting evidence";
 /** The longest bar quoted on a card. */

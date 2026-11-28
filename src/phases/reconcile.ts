@@ -15,7 +15,7 @@ import { CycleEvent, itemOf, labelFromTrailer, notifyOnce, workStateOf } from ".
 import { codeHost } from "../plugins/registry.js";
 import type { CodeHost } from "../code-host.js";
 import type { ForemanRuntime } from "../runtime.js";
-import { AWAITING_EVIDENCE_LABEL, expireAwaitingEvidence } from "./evidence-expiry.js";
+import { AWAITING_EVIDENCE_LABEL, expireAwaitingEvidence, shippedInPromotions } from "./evidence-expiry.js";
 import { epicRefs } from "../unstick.js";
 
 /**
@@ -247,9 +247,7 @@ export async function runAwaitingEvidenceExpiry(repoConfig: RepoConfig, config: 
     const plugin = roleFor("unstick", config);
     const host = codeHost();
     const repo = repoConfig.githubRepo;
-    let promotedSet: Promise<Set<number>> | null = null;
-    const promoted = () => (promotedSet ??= host.recentMergedReleasePrs(repoConfig, undefined, 50)
-      .then((prs) => new Set(prs.flatMap((p) => [...p.body.matchAll(/(?:^|[^\w&])#(\d+)\b/g)].map((m) => Number(m[1]))))));
+    const shipped = shippedInPromotions((limit) => host.recentMergedReleasePrs(repoConfig, undefined, limit));
     const res = await expireAwaitingEvidence(nowMs, maxAge, config.unstickEscalationOwner ?? "", {
       // A card that also carries a lifecycle or blocked label is still in the pipeline: expiry leaves it to its stage.
       openLabeled: async () => (await host.getOpenIssues(repo, repoConfig.repoPath, logger))
@@ -258,9 +256,8 @@ export async function runAwaitingEvidenceExpiry(repoConfig: RepoConfig, config: 
         .map((i) => i.number),
       newestEventAt: (n) => host.lastIssueActivity(repoConfig, n),
       readBody: (n) => host.readIssueBody(repoConfig, n),
-      // Shipped means the card is named in a merged production promotion (its manifest lists every card the release carries):
-      // read once per check, not per card. A release-label history would also match queued or revoked work.
-      shipped: async (n) => (await promoted()).has(n),
+      // Shipped means named in a merged production promotion; unknown is never shipped (see `shippedInPromotions`).
+      shipped,
       epicOf: (body) => (repoConfig.epicRefLabel ? (epicRefs(body, repoConfig.epicRefLabel)[0] ?? null) : null),
       fileFollowUp: async (input) => plugin?.fileVerifyFollowUp
         ? await plugin.fileVerifyFollowUp(repoConfig, config, input, logger)

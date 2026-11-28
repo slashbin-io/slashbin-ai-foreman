@@ -1,7 +1,7 @@
 // `awaiting evidence` expires like a prod hold: same max age, a follow-up through the EM plugin, closed with the bar quoted.
 import test from "node:test";
 import assert from "node:assert/strict";
-import { evidenceBar, expireAwaitingEvidence, AWAITING_EVIDENCE_LABEL } from "../dist/phases/evidence-expiry.js";
+import { evidenceBar, expireAwaitingEvidence, shippedInPromotions, AWAITING_EVIDENCE_LABEL } from "../dist/phases/evidence-expiry.js";
 
 const DAY = 86_400_000;
 const NOW = Date.parse("2026-11-28T12:00:00Z");
@@ -86,4 +86,38 @@ test("a failed close keeps the card; one card's throw does not stop the next", a
   assert.deepEqual(await expireAwaitingEvidence(NOW, MAX, "owner", d, logger), { closed: [2], followedUp: [], kept: [1] });
   const f = deps({ closeCard: async () => false });
   assert.deepEqual((await expireAwaitingEvidence(NOW, MAX, "owner", f.d, logger)).kept, [1]);
+});
+
+// The promotion lookup itself, not a stubbed `shipped`: an unknown ship state never closes a card.
+const promo = (...nums) => ({ body: "## Issues included\n" + nums.map((n) => `- #${n}: Delivery`).join("\n") });
+
+test("a card named in a merged production promotion counts as shipped and is closed", async () => {
+  const { d, calls } = deps({ shipped: shippedInPromotions(async () => [promo(5, 101), promo(7)]), openLabeled: async () => [101] });
+  const res = await expireAwaitingEvidence(NOW, MAX, "owner", d, logger);
+  assert.deepEqual(res.closed, [101]);
+  assert.equal(calls.filed.length, 0);
+});
+
+test("a card merged only to develop is in no promotion: follow-up, never a close", async () => {
+  const { d, calls } = deps({ shipped: shippedInPromotions(async () => [promo(5, 7)]), openLabeled: async () => [101] });
+  const res = await expireAwaitingEvidence(NOW, MAX, "owner", d, logger);
+  assert.deepEqual(res.followedUp, [101]);
+  assert.equal(calls.closed.length, 0);
+});
+
+test("a card older than the last 50 promotions is unknown: follow-up, never a close", async () => {
+  const all = [...Array.from({ length: 50 }, (_, i) => promo(1000 + i)), promo(101)];
+  let asked = 0;
+  const { d, calls } = deps({ shipped: shippedInPromotions(async (limit) => { asked = limit; return all.slice(0, limit); }), openLabeled: async () => [101] });
+  const res = await expireAwaitingEvidence(NOW, MAX, "owner", d, logger);
+  assert.equal(asked, 50);
+  assert.deepEqual(res.followedUp, [101]);
+  assert.equal(calls.closed.length, 0);
+});
+
+test("the promotions are read once for all cards", async () => {
+  let reads = 0;
+  const shipped = shippedInPromotions(async () => { reads++; return [promo(1)]; });
+  await shipped(1); await shipped(2);
+  assert.equal(reads, 1);
 });
