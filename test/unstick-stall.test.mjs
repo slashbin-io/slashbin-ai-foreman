@@ -340,6 +340,15 @@ test("planStageStalls keeps an unreadable indexed card and resolves a closed car
   assert.deepEqual(plan.index, [1, 5]);
 });
 
+test("an approved card held on another card (blocked-by or readiness) opens no stage-approved stall, and a live one resolves", () => {
+  const live = { "stage-approved": { state: "open", cause: "stage-approved", affected: [] } };
+  const plan = planStageStalls(new Map([[1, "approved"], [2, "approved"], [3, "approved"], [4, "awaitingSignoff"]]),
+    new Map([[1, undefined], [2, live], [3, undefined], [4, undefined]]), new Map(), [], "o/host", new Set([1, 2, 4]));
+  assert.deepEqual(plan.report.map((r) => [r.issue, r.rule.cause]), [[3, "stage-approved"], [4, "stage-awaiting-signoff"]]);
+  assert.deepEqual(plan.resolve, [{ issue: 2, cause: "stage-approved" }]);
+  assert.deepEqual(plan.index, [3, 4]);
+});
+
 test("a card another stall already owns opens no stage stall, on its own record or named in a release stall's affected", () => {
   const release = { "release-sign-off": { state: "escalated", cause: "release-sign-off", affected: ["o/host#1", "o/host#2"] } };
   const plan = planStageStalls(new Map([[1, "awaitingSignoff"], [2, "awaitingSignoff"], [3, "releasing"], [4, "pendingVerification"]]),

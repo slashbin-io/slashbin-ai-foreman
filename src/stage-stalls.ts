@@ -73,7 +73,9 @@ export interface StageStallPlan {
 /**
  * What one pass does. `stages`: the open lifecycle cards' stages. `open`: the readable open cards' stalls. `closed`:
  * the readable stalls of indexed cards no longer open. `unreadable`: indexed cards whose record could not be read,
- * left alone and kept in the index for the next pass. Pure.
+ * left alone and kept in the index for the next pass. `waitingOnOther`: approved cards held on another card (an
+ * unmerged blocked-by or an unmet Pre-Flight readiness line); they open no `stage-approved` stall and a live one
+ * resolves, since the card they wait on carries its own. Pure.
  */
 export function planStageStalls(
   stages: ReadonlyMap<number, StageOrDone>,
@@ -81,6 +83,7 @@ export function planStageStalls(
   closed: ReadonlyMap<number, Partial<Record<StallCause, StallRecord>> | undefined>,
   unreadable: Iterable<number>,
   repo: string,
+  waitingOnOther: ReadonlySet<number> = new Set(),
 ): StageStallPlan {
   const plan: StageStallPlan = { report: [], resolve: [], index: [] };
   const index = new Set<number>(unreadable);
@@ -97,7 +100,8 @@ export function planStageStalls(
   }
   for (const [issue, cardStalls] of open) {
     const stage = stages.get(issue);
-    const rule = stage ? STAGE_STALL_RULES[stage] : undefined;
+    // An approved card held on another card (blocked-by, readiness) is not a Foreman fault: that card owns the wait.
+    const rule = stage && !(stage === "approved" && waitingOnOther.has(issue)) ? STAGE_STALL_RULES[stage] : undefined;
     for (const cause of STAGE_STALL_CAUSES) {
       if (rule?.cause === cause && (live(cardStalls, cause) || (other(cardStalls).length === 0 && !named.has(issue)))) {
         index.add(issue);

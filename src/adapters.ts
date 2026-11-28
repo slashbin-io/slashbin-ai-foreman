@@ -76,6 +76,13 @@ export interface WorkSourceAdapter {
   heldWork?(repoConfig: RepoConfig): ReadonlyArray<WaitingItem>;
 
   /**
+   * The approved items the last eligibility pass held because they wait on ANOTHER item (an unmerged
+   * blocked-by, an unmet Pre-Flight readiness line). Their wait has an owner elsewhere, so no
+   * `stage-approved` stall is a Foreman fault for them. Optional: a source with no such holds omits it.
+   */
+  waitingOnOther?(repoConfig: RepoConfig): ReadonlySet<number>;
+
+  /**
    * Every item approved and free to build, without `selectWork`'s open-PR
    * cross-check and batch cap: implement labels a PR against it, review counts
    * it to keep a checkout. Optional; never throws (a failed read gives []).

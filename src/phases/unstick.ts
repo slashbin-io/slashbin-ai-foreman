@@ -39,7 +39,7 @@ import { unlinkedFixPremise } from "./implement.js";
 import { codeHost } from "../plugins/registry.js";
 import type { CodeHost } from "../code-host.js";
 import type { ForemanRuntime } from "../runtime.js";
-import { workSourceFor } from "../work-source.js";
+import { workSourceFor, waitingOnOther } from "../work-source.js";
 import { planStageStalls } from "../stage-stalls.js";
 import type { StageOrDone } from "../lifecycle.js";
 
@@ -249,6 +249,7 @@ async function trackStageStalls(rt: ForemanRuntime, repoConfig: RepoConfig, conf
     new Map([...(closed?.records ?? [])].map(([n, r]) => [n, r.stalls])),
     unreadable,
     repoConfig.githubRepo,
+    waitingOnOther(repoConfig),
   );
   const now = new Date().toISOString();
   const index = new Set(plan.index);

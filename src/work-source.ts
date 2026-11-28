@@ -170,6 +170,11 @@ export async function selectWork(
   return workSourceFor(repoConfig).selectWork(repoConfig, config, logger);
 }
 
+/** The approved items the last eligibility pass held on another item (blocked-by, readiness). */
+export function waitingOnOther(repoConfig: RepoConfig): ReadonlySet<number> {
+  return workSourceFor(repoConfig).waitingOnOther?.(repoConfig) ?? new Set();
+}
+
 /** What the last `selectWork` held back for a reason about the item itself, for the waiting set. */
 export function heldWork(repoConfig: RepoConfig): ReadonlyArray<WaitingItem> {
   return workSourceFor(repoConfig).heldWork?.(repoConfig) ?? [];

@@ -177,6 +177,9 @@ export class GitHubIssueConnector implements WorkSourceAdapter {
   /** repo → the issues the last full eligibility pass held for an invalid Acceptance, with the reason: the board's view of the hold. */
   private readonly acceptanceHeld = new Map<string, WaitingItem[]>();
 
+  /** repo → the issues the last full eligibility pass held on another issue (blocked-by or readiness): not a Foreman stall. */
+  private readonly onOther = new Map<string, Set<number>>();
+
   /** `identity` is the Foreman login, shared with the code host; a test gets its own. */
   constructor(private readonly identity: ForemanIdentity = new ForemanIdentity()) {
     this.records = new GitHubRecordStore({
@@ -196,6 +199,10 @@ export class GitHubIssueConnector implements WorkSourceAdapter {
 
   async selectWork(repoConfig: RepoConfig, _config: AgentConfig, logger: Logger): Promise<WorkItem[]> {
     return (await this.selectUncovered(repoConfig, logger)).map((n) => ({ issueNumber: n, repo: repoConfig.githubRepo }));
+  }
+
+  waitingOnOther(repoConfig: RepoConfig): ReadonlySet<number> {
+    return this.onOther.get(repoConfig.githubRepo) ?? new Set();
   }
 
   heldWork(repoConfig: RepoConfig): ReadonlyArray<WaitingItem> {
@@ -727,13 +734,15 @@ export class GitHubIssueConnector implements WorkSourceAdapter {
 
     const actionable: number[] = [];
     const held: WaitingItem[] = [];
+    const onOther = new Set<number>();
     for (const issue of issues) {
       const labels = issue.labels.map((l) => l.name);
       if (!isApprovedUnbuilt(config, labels)) continue;
-      if (await this.waitsOnBlocker(config, issue.number, logger, held)) continue;
+      if (await this.waitsOnBlocker(config, issue.number, logger, held, onOther)) continue;
       actionable.push(issue.number);
     }
     this.acceptanceHeld.set(config.githubRepo, held);
+    this.onOther.set(config.githubRepo, onOther);
     return actionable;
   }
 
@@ -742,13 +751,14 @@ export class GitHubIssueConnector implements WorkSourceAdapter {
    * branch (dependencies.ts). An unreadable dependency list holds the issue too:
    * a stall is logged and visible, a build out of order is neither.
    */
-  private async waitsOnBlocker(config: RepoConfig, num: number, logger: Logger, held: WaitingItem[] = []): Promise<boolean> {
+  private async waitsOnBlocker(config: RepoConfig, num: number, logger: Logger, held: WaitingItem[] = [], onOther?: Set<number>): Promise<boolean> {
     const key = `${config.githubRepo}#${num}`;
     let hold: string | null;
     let announce: { kind: HoldKind; reasons: string[] } | null = null;
     try {
       const unmet = unmetBlockers(await blockersOf(config.githubRepo, num, config.repoPath), config.lifecycleLabels);
       hold = unmet.length ? `blocked by ${unmet.map((b) => blockerRef(b, config.githubRepo)).join(", ")} until it merges` : null;
+      if (unmet.length) onOther?.add(num);
     } catch (err) {
       hold = `its blockers could not be read (${err instanceof Error ? err.message : String(err)})`;
     }
@@ -758,6 +768,7 @@ export class GitHubIssueConnector implements WorkSourceAdapter {
         const readinessUnmet = await unmetReadiness(parseReadiness(body), async (args) => await ghAsync(args, config.repoPath));
         if (readinessUnmet.length) {
           hold = `Pre-Flight readiness not met: ${readinessUnmet.join("; ")}`;
+          onOther?.add(num);
           announce = { kind: "readiness", reasons: readinessUnmet };
         } else {
           const verdict = acceptanceVerdict(body);
