@@ -1696,6 +1696,22 @@ test("signoff: a dark flag outside the Pre-Flight still holds the release", asyn
   assert.deepEqual(statuses().map((s) => s.state), ["failure"]);
 });
 
+test("signoff: a release held by a `blocked` issue still clears the sign-off status once every issue is signed", async () => {
+  // A late issue was signed while another sat blocked on a pre-deploy STOP; the failing status
+  // stayed, so the cards read as awaiting the EM's sign-off instead of the stop that held them.
+  world(unsignedWorld(), { approve: { exit: 0 }, deploy: DEPLOYED("pass") });
+  await run();
+  assert.deepEqual(statuses().map((s) => s.state), ["failure"]);
+
+  const g = gh();
+  g.issues[7].labels = ["approved", "release pending"];
+  g.issues[5].labels.push("blocked");
+  writeFileSync(GH_STATE, JSON.stringify(g));
+  assert.equal(await run(2), false, "the blocked issue still holds the release");
+  assert.equal(agentCalls().length, 0, "neither the Tech Lead nor the SRE is asked while an issue is blocked");
+  assert.deepEqual(statuses().map((s) => s.state), ["failure", "success"], "the sign-off hold is cleared");
+});
+
 test("signoff: a release whose every issue is signed is deployed, with a passing status", async () => {
   world(pending(), { approve: { exit: 0 }, deploy: DEPLOYED("pass") });
   assert.equal(await run(), true);

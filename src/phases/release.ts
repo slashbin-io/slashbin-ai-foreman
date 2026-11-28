@@ -1526,7 +1526,25 @@ async function deploy(rt: ForemanRuntime, repoConfig: RepoConfig, config: AgentC
     logger.info(`Release PR #${open.number}: ${unsigned.map((n) => `#${n}`).join(", ")} not signed off by the EM; not deploying`);
     return false;
   }
-  if (rt.memory.releaseBackoff.waiting(key)) return false;
+  // Every listed issue is signed. A release held below (back-off, a `blocked` issue) still settles the
+  // sign-off status first: a stale failure would keep its cards at awaiting sign-off, naming the EM for a
+  // hold that is the SRE's or a person's.
+  const settleSignoff = async (): Promise<void> => {
+    try {
+      const headSha = (await codeHost().viewReleasePr(repoConfig, open.number)).headSha;
+      const head = await codeHost().unsignedInHead(repoConfig, logger);
+      if (head === null) return;
+      const lateUnsigned = await withoutDark(repoConfig, open.number, head.unsigned, logger, headSha, dark);
+      const clear = lateUnsigned.length === 0 && head.unresolved.length === 0;
+      await codeHost().syncSignoff(repoConfig, open.number, headSha, lateUnsigned, logger, head.unresolved, clear ? [...dark.keys()] : []);
+    } catch (err) {
+      logger.warn(`Could not settle the sign-off status of release PR #${open.number}: ${errText(err)}`);
+    }
+  };
+  if (rt.memory.releaseBackoff.waiting(key)) {
+    await settleSignoff();
+    return false;
+  }
   const pending = issues.filter((i) => codeHost().hasLabel(i, repoConfig.lifecycleLabels.releasePending)).map((i) => i.number);
   if (pending.length === 0) return false;
   const stopped = issues.filter((i) => codeHost().hasLabel(i, repoConfig.github.blockedLabel)).map((i) => i.number);
@@ -1535,6 +1553,7 @@ async function deploy(rt: ForemanRuntime, repoConfig: RepoConfig, config: AgentC
   const recheck = stopped.length > 0 ? await predeployRecheck(rt, repoConfig, config, open.number, own.predeployStop, stopped, issues.map((i) => i.number), logger) : null;
   if (stopped.length === 0 || !recheck) await trackHold(rt, repoConfig, "release-blocked-label", stopped, open.number, gate.loaded.records, logger);
   if (stopped.length > 0 && !recheck) {
+    await settleSignoff();
     logger.debug(`Release PR #${open.number}: ${stopped.map((n) => `#${n}`).join(", ")} blocked; not deploying`);
     return false;
   }
