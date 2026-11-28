@@ -25,7 +25,9 @@ export interface EventLoopMonitorOptions {
 export interface EventLoopMonitor {
   /** Runs one lane pass with it counted as in flight; its result or error passes through. */
   track<T>(repo: string, lane: string, pass: () => Promise<T>): Promise<T>;
-  /** Stops the detector. */
+  /** Stops the detector: the timer and the pass-end check. A pass ending after this (a drain)
+   * would otherwise report the whole quiet interval since the previous pass as one stall:
+   * 2026-11-28 a 60 min drain logged "Event-loop stall 3200910ms" and read as a 53 min freeze. */
   disable(): void;
 }
 
@@ -33,9 +35,11 @@ export function startEventLoopMonitor(logger: Logger, opts: EventLoopMonitorOpti
   const now = opts.now ?? (() => performance.now());
   const active = new Set<string>();
   let last = now();
+  let on = true;
 
   /** Consumes the elapsed gap; logs it when it is a stall. */
   const check = (): void => {
+    if (!on) return;
     const t = now();
     const gap = t - last;
     last = t;
@@ -59,6 +63,7 @@ export function startEventLoopMonitor(logger: Logger, opts: EventLoopMonitorOpti
       }
     },
     disable() {
+      on = false;
       clearInterval(tick);
     },
   };

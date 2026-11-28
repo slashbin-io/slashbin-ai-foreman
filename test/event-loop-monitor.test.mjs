@@ -83,3 +83,14 @@ test("per-pass cost is under 0.5 ms", async () => {
   assert.ok((performance.now() - t0) / 1000 < 0.5);
 });
 
+
+test("a pass that ends after disable() logs no stall line (drain after shutdown)", async () => {
+  const log = logger();
+  let clock = 0;
+  const mon = startEventLoopMonitor(log, { now: () => clock });
+  const pass = mon.track("r/x", "unstick", async () => { await sleep(20); });
+  mon.disable();
+  clock = 3_200_000; // an hour-long drain: the loop was free, only no tick measured it
+  await pass;
+  assert.deepEqual(stalls(log), []);
+});
