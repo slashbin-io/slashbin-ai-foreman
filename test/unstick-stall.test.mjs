@@ -409,3 +409,16 @@ test("a closed card whose resolve cannot be saved stays in the stage-stall index
     assert.equal((await repoRecordOf(w.rt, w.repo)).stageStalls, undefined);
   });
 });
+
+test("an approved card queued behind a build in the same repo opens no stall, and a live one resolves", () => {
+  const live = { "stage-approved": { state: "open", cause: "stage-approved", affected: [] } };
+  for (const busy of ["implementing", "inReview", "reviewing", "changesRequested", "revising"]) {
+    const plan = planStageStalls(new Map([[1, "approved"], [2, "approved"], [3, busy]]), new Map([[1, undefined], [2, live], [3, undefined]]), new Map(), [], "o/host");
+    assert.deepEqual(plan.report, [], `${busy}: a queued card is not reported`);
+    assert.deepEqual(plan.resolve, [{ issue: 2, cause: "stage-approved" }], `${busy}: a live stall on a queued card resolves`);
+  }
+  const free = planStageStalls(new Map([[1, "approved"], [3, "merged"]]), new Map([[1, undefined], [3, undefined]]), new Map(), [], "o/host");
+  assert.deepEqual(free.report.map((r) => [r.issue, r.rule.cause]), [[1, "stage-approved"]], "with the build free the stall opens");
+  const held = planStageStalls(new Map([[1, "prodVerifyHeld"], [3, "inReview"]]), new Map([[1, undefined], [3, undefined]]), new Map(), [], "o/host");
+  assert.deepEqual(held.report.map((r) => [r.issue, r.rule.cause]), [[1, "stage-prod-verify-held"]], "only approved cards queue");
+});

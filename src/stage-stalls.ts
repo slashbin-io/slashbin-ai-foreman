@@ -11,6 +11,13 @@
 // release-level stall is held on its first issue's record), has an owner: no stage stall opens beside it, so one
 // wait is never raised twice.
 //
+// An approved card is queued, not stalled, while another card of the same repo holds the build: it is being built,
+// its PR is open under review, or it waits on its revision (`BUILD_STAGES`). The Foreman builds a repo one feature
+// PR at a time, so the queue behind it is the stage's meaning ("queued behind an open feature PR"), not a fault.
+// The stall opens on the first pass that sees the build free and the card still approved, and a stall already open
+// on a card that is now queued resolves (2026-11-28: an S2 card behind ten approved S0 cards while
+// a PR was in review, was raised as a Foreman fault).
+//
 // Read from the work source's own snapshot, the stage the board shows. A stall starts when the unstick pass
 // first sees the card at the stage (the record keeps that start; nothing earlier is known), and resolves on
 // the first pass that sees the card anywhere else. Dark behind FOREMAN_STALL_CLOCK like every stall.
@@ -59,6 +66,9 @@ export const STAGE_STALL_RULES: Readonly<Partial<Record<StageOrDone, StageStallR
   },
 };
 
+/** The stages that hold a repo's one build: an approved card behind any of them is queued. */
+export const BUILD_STAGES: ReadonlySet<StageOrDone> = new Set<StageOrDone>(["implementing", "inReview", "reviewing", "changesRequested", "revising"]);
+
 export const STAGE_STALL_CAUSES: ReadonlySet<StallCause> = new Set(Object.values(STAGE_STALL_RULES).map((r) => r!.cause));
 
 export interface StageStallPlan {
@@ -95,9 +105,11 @@ export function planStageStalls(
     const m = /^(.+)#(\d+)$/.exec(a);
     if (m && m[1].toLowerCase() === repo.toLowerCase()) named.add(Number(m[2]));
   }
+  const building = [...stages.values()].some((s) => BUILD_STAGES.has(s));
   for (const [issue, cardStalls] of open) {
     const stage = stages.get(issue);
-    const rule = stage ? STAGE_STALL_RULES[stage] : undefined;
+    const queued = stage === "approved" && building;
+    const rule = stage && !queued ? STAGE_STALL_RULES[stage] : undefined;
     for (const cause of STAGE_STALL_CAUSES) {
       if (rule?.cause === cause && (live(cardStalls, cause) || (other(cardStalls).length === 0 && !named.has(issue)))) {
         index.add(issue);
