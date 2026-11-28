@@ -15,6 +15,7 @@ import { buildDependencyBatchIssue, findDependencyPRs, findOpenDependencyBatchIs
 import { createPromotionPR } from "../dist/github/promotion.js";
 import { createSyncPR } from "../dist/github/branch.js";
 import { buildSessionEnv } from "../dist/session/env.js";
+import { priorityTier } from "../dist/github/discovery.js";
 import { buildTechLeadEnv } from "../dist/plugins/tech-lead.js";
 import { buildSreEnv } from "../dist/plugins/sre.js";
 
@@ -34,10 +35,19 @@ function load(extra, repo = {}) {
   }
 }
 
+test("an S0 card jumps the queue: it ranks ahead of S1 and of its own type label", () => {
+  const tiers = DEFAULT_GITHUB_CONVENTIONS.priorityLabels;
+  const s0 = priorityTier(["enhancement", "S0"], tiers);
+  assert.ok(s0 < priorityTier(["S1"], tiers));
+  assert.ok(s0 < priorityTier(["security"], tiers));
+  assert.ok(s0 < priorityTier(["enhancement"], tiers));
+});
+
 test("defaults are the names the Foreman always used", () => {
   const d = DEFAULT_GITHUB_CONVENTIONS;
   assert.equal(d.blockedLabel, "blocked");
-  assert.deepEqual(d.priorityLabels[0], ["S1"]);
+  assert.deepEqual(d.priorityLabels[0], ["S0"]);
+  assert.deepEqual(d.priorityLabels[1], ["S1"]);
   assert.deepEqual(d.priorityLabels.at(-1), ["chore"]);
   assert.deepEqual(d.dependencyBranchPrefixes, ["dependabot/"]);
   assert.equal(d.dependencyBatchTitlePrefix, "chore(deps): validate and land ");

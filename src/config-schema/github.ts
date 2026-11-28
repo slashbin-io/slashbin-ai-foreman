@@ -36,7 +36,7 @@ export const githubConventionsSchema = z.object({
   // takes the first tier it matches. Sessions get it as FOREMAN_PRIORITY_LABELS
   // (JSON). An issue matching no tier comes after every tier.
   priorityLabels: z.array(z.array(name).min(1)).min(1).default([
-    ["S1"], ["security"], ["S2", "bug"], ["S2", "enhancement"], ["S2", "feature"],
+    ["S0"], ["S1"], ["security"], ["S2", "bug"], ["S2", "enhancement"], ["S2", "feature"],
     ["bug"], ["enhancement"], ["feature"], ["S3"], ["chore"],
   ]),
   // Head-branch prefixes that mark a dependency-update PR, for the
