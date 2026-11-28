@@ -15,6 +15,7 @@ import { join, dirname } from "node:path";
 import { tmpdir } from "node:os";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { spawnSync } from "node:child_process";
+import { backoffDelay } from "../dist/backoff.js";
 import { detectUpstreamLimit, parseClaudeReset } from "../dist/refusal.js";
 import { orchestratorSource } from "./source-text.mjs";
 
@@ -56,6 +57,9 @@ function runCase(body, { baseMs = 200, capMs = 1600 } = {}) {
     import { writeFileSync, readFileSync } from "node:fs";
     const F = ${JSON.stringify(F)};
     const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+    // Wait for an observable state change, never a fixed budget: a loaded runner stalls the probe's gh spawn
+    // for far longer than any sleep sized for an idle machine, so a fixed sleep races it.
+    const until = async (cond, ms = 15000) => { for (const end = Date.now() + ms; !cond() && Date.now() < end; ) await sleep(10); return cond(); };
     const calls = () => readFileSync(F.log, "utf8").split("\\n").filter(Boolean)
       .map((l) => { const [ts, ...a] = l.split(" "); return { ts: Number(ts), args: a.join(" ") }; });
     const isProbe = (c) => c.args.startsWith("api rate_limit") || c.args.startsWith("api graphql");
@@ -152,10 +156,10 @@ test("a failed probe extends with a doubled window; a passing probe clears and r
     rate(5000, nowSec(), 0);                // graphql exhausted, reset already past
     await call();
     writeFileSync(F.err, "");
-    await sleep(300);                       // probe at ~200ms → still limited
+    await until(() => notes.length >= 2);   // first probe (~200ms) fires and is still limited → extend note
     const afterFirstProbe = notes.length;
     rate(5000, nowSec() + 3600);
-    await sleep(600);                       // probe at ~200+400ms → clear
+    await until(() => notes.length >= 3);   // second probe (~400ms window later) → clear
     const resolved = await Promise.race([B.whenUpstreamClear("github").then(() => true), sleep(50).then(() => false)]);
     console.log(JSON.stringify({ afterFirstProbe, notes, probes: probes(), resumed: await call(), work: work(), resolved }));
   `);
@@ -176,9 +180,9 @@ test("a stated GitHub reset later than the doubled window is honoured", () => {
     const resetSec = nowSec() + 2;
     rate(0, resetSec);
     await call();
-    await sleep(300);
+    await until(() => notes.length >= 2);    // first probe saw the stated reset and extended
     rate(5000, nowSec() + 3600);
-    await sleep(2300);
+    await until(() => probes().length >= 2); // second probe is held back to the reset, however late it fires
     console.log(JSON.stringify({ resetMs: resetSec * 1000, probes: probes() }));
   `);
   assert.ok(r.probes.length >= 2);
@@ -191,13 +195,17 @@ test("the window doubles up to the cap and never past it", () => {
     rate(0, nowSec());
     await call();
     // Wait for the probes, not a fixed budget: a slow CI runner fires late and fits fewer in.
-    for (const end = Date.now() + 4000; probes().length < 5 && Date.now() < end; ) await sleep(50);
+    await until(() => probes().length >= 5);
     const p = probes();
     console.log(JSON.stringify({ gaps: p.slice(1).map((t, i) => t - p[i]) }));
   `, { baseMs: 100, capMs: 400 });
   assert.ok(r.gaps.length >= 4, JSON.stringify(r.gaps));
-  assert.ok(r.gaps.every((g) => g <= 400 + 150), JSON.stringify(r.gaps));
-  assert.ok(r.gaps[1] >= 350, `reached the cap: ${r.gaps}`);
+  // Lower bounds only: a timer fires late on a loaded runner, never early, so "<= cap + slack" on a
+  // wall-clock gap is the race. The cap itself is the pure window function the scheduler calls.
+  assert.ok(r.gaps[1] >= 350 && r.gaps[2] >= 350, `reached the cap: ${r.gaps}`);
+  const w = { baseMs: 100, capMs: 400, factor: 2 };
+  for (let n = 1; n <= 60; n++) assert.ok(backoffDelay(n, w) <= 400, `window ${n} past the cap`);
+  assert.equal(backoffDelay(60, w), 400);
 });
 
 test("HTTP 429 enters the back-off; HTTP 404 does not", () => {
@@ -221,7 +229,7 @@ test("a re-entry soon after a clear continues the doubling; a later one starts a
     writeFileSync(F.err, ${JSON.stringify(LIMIT_ERR)});
     rate(5000, nowSec() + 3600);
     await call();                                  // enter at the base, 1000ms
-    await sleep(1050);                       // the probe clears
+    await until(() => notes.length >= 2);    // the probe clears (note 2 is the "cleared" note)
     await sleep(${gapMs});
     await call();
     console.log(JSON.stringify({ notes: notes.map((n) => n.t) }));
