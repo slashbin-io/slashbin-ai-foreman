@@ -23,6 +23,8 @@ export interface RepoIdentity {
   keyOf(repo: string): Promise<string>;
   /** The registry's customer GitHub labels (the non-null `systems.github_label` of each live customer). Memoised, failure included, until the next `beginScan`. Throws when the registry cannot answer. */
   customerLabels(): Promise<string[]>;
+  /** One call of any named tool on the registry's MCP endpoint: the tool's answer, unmemoised. Throws when the registry cannot answer. */
+  callTool(tool: string, args?: object): Promise<unknown>;
   /** A new scan: drop answers older than REPO_KEY_TTL_MS and reopen the MCP session. */
   beginScan(): void;
   /** HTTP requests sent to the registry so far (retries included), for the scan's log line. */
@@ -171,6 +173,7 @@ export function createRepoIdentity(opts: RepoIdentityOptions): RepoIdentity {
       customers ??= askCustomers();
       return customers;
     },
+    callTool: (tool, args = {}) => call(tool, args),
     beginScan() {
       customers = null;
       for (const [repo, e] of memo) if (now() - e.at >= REPO_KEY_TTL_MS) memo.delete(repo);
