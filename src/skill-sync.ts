@@ -740,7 +740,10 @@ export class SkillSync {
         // a current one already was. So each such skill's tree in the commit must be the golden's, file set and bytes.
         // A file a person put back (restoring what the delivery deleted, even when that undoes the skill's whole diff),
         // or an edited byte, breaks that and the branch is left alone.
-        const touched = (n: string) => changes.some(([, path]) => path.startsWith(`${a.target}/${n}/`));
+        // A dropped skill is checked when the diff touches it or the subject names it as synced: a person who restores
+        // what the delivery deleted can erase the skill's whole diff, but not the subject that says it was delivered.
+        const synced = new Set((/^chore\(skills\): sync (.+) from /.exec(subject)?.[1] ?? "").split(",").map((n) => n.trim()));
+        const touched = (n: string) => synced.has(n) || changes.some(([, path]) => path.startsWith(`${a.target}/${n}/`));
         for (const name of [...a.names, ...dropped.filter(touched)]) {
           const files = then.skills.get(name);
           if (!files) continue; // not in the golden then: the diff check above proved the delivery left it alone

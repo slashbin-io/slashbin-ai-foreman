@@ -614,6 +614,22 @@ test("cutover: a pre-tree delivery whose removed-skill file a person edited is l
   assert.equal(git(bare, "rev-parse", first.branch), tip);
 });
 
+test("cutover: a pre-tree delivery whose removed skill a person restored, erasing its whole diff, is left alone (Tech Lead S1 on #430)", async () => {
+  const cfg = cfgFor(makeGolden(tmp));
+  const clone = makeRepo(tmp, { ...STALE, ".claude/skills/revise-pr-feedback/local-notes.md": "mine\n", ".claude/skills/clean-code/SKILL.md": "clean v1\n" });
+  const first = await skillSync.deliverSkillsForIssue(cfg, { ...repoOf(clone), skillSyncSkills: ["clean-code", "implement-approved-issues", "revise-pr-feedback"] }, ISSUE, logger());
+  const bare = join(tmp, "svc.git");
+  const work = asLegacy(bare, first.branch, "legacy-cutover-restored");
+  assert.match(git(work, "log", "-1", "--format=%s"), /revise-pr-feedback/);
+  writeFileSync(join(work, ".claude/skills/revise-pr-feedback/local-notes.md"), "mine\n");
+  git(work, "add", "-A"); git(work, "commit", "--quiet", "--amend", "--no-edit"); git(work, "push", "--quiet", "--force", "origin", first.branch);
+  assert.equal(git(work, "diff", "--name-only", "HEAD~1", "HEAD", "--", ".claude/skills/revise-pr-feedback"), "");
+  const tip = git(bare, "rev-parse", first.branch);
+  const out = await skillSync.deliverSkillsForIssue(cfg, HUMAN_ONLY(clone), ISSUE, logger(), noPr);
+  assert.notEqual(out.status, "refreshed");
+  assert.equal(git(bare, "rev-parse", first.branch), tip);
+});
+
 test("cutover: a skill the repo also selects, or a name the golden does not carry, is never removed", async () => {
   const cfg = cfgFor(makeGolden(tmp));
   const clone = makeRepo(tmp, { ...CURRENT, ".claude/skills/my-own/SKILL.md": "mine\n" });
