@@ -552,3 +552,55 @@ test("readGoldenAt reads a builtin golden from the Foreman's own git at its comm
   assert.equal(await ss.readGoldenAt(cfg, "0000000"), null);
   assert.equal(await ss.readGoldenAt(cfg, "not-hex"), null);
 });
+
+// --- Cutover: a repo no Foreman builder serves any more loses the Foreman-only skills in the delivery itself ---
+
+const HUMAN_ONLY = (clone) => ({
+  ...repoOf(clone), skillSyncSkills: ["clean-code"], skillSyncRemove: ["implement-approved-issues", "revise-pr-feedback"],
+});
+
+test("cutover: the delivery removes the Foreman-only skills, keeps the selected ones and every other file, and a later run keeps them gone", async () => {
+  const cfg = cfgFor(makeGolden(tmp));
+  const clone = makeRepo(tmp, { ...CURRENT, ".claude/ship.json": "{\"base\":\"develop\"}\n" });
+  const out = await skillSync.deliverSkillsForIssue(cfg, HUMAN_ONLY(clone), ISSUE, logger());
+  assert.equal(out.status, "delivered", "the selected skill is current, so the removals alone make the delivery");
+  assert.match(out.subject, /^chore\(skills\): sync -implement-approved-issues, -revise-pr-feedback from em@[0-9a-f]{7,} \(#42\)$/);
+  const bare = join(tmp, "svc.git");
+  assert.equal(git(bare, "ls-tree", "-r", "--name-only", out.sha, ".claude/skills/implement-approved-issues", ".claude/skills/revise-pr-feedback"), "");
+  assert.equal(git(bare, "show", `${out.sha}:.claude/skills/clean-code/SKILL.md`), "clean v1");
+  assert.equal(git(bare, "show", `${out.sha}:.claude/ship.json`), "{\"base\":\"develop\"}");
+  // The delivery merges: the base now lacks them, and the next issue's run has nothing to do.
+  git(bare, "update-ref", "refs/heads/develop", out.sha);
+  assert.deepEqual(await skillSync.deliverSkillsForIssue(cfg, HUMAN_ONLY(clone), { number: 43, title: "next" }, logger()), { status: "current" });
+});
+
+test("cutover: an untouched delivery made before the removal list is refreshed to carry it", async () => {
+  const cfg = cfgFor(makeGolden(tmp));
+  const clone = makeRepo(tmp, { ...STALE, ".claude/skills/clean-code/SKILL.md": "clean v0\n" });
+  const first = await skillSync.deliverSkillsForIssue(cfg, { ...repoOf(clone), skillSyncSkills: ["clean-code"] }, ISSUE, logger());
+  assert.equal(first.status, "delivered");
+  const out = await skillSync.deliverSkillsForIssue(cfg, HUMAN_ONLY(clone), ISSUE, logger(), noPr);
+  assert.equal(out.status, "refreshed");
+  const bare = join(tmp, "svc.git");
+  assert.equal(git(bare, "ls-tree", "-r", "--name-only", out.sha, ".claude/skills/implement-approved-issues", ".claude/skills/revise-pr-feedback"), "");
+  assert.equal(git(bare, "show", `${out.sha}:.claude/skills/clean-code/SKILL.md`), "clean v1");
+});
+
+test("cutover: a skill the repo also selects, or a name the golden does not carry, is never removed", async () => {
+  const cfg = cfgFor(makeGolden(tmp));
+  const clone = makeRepo(tmp, { ...CURRENT, ".claude/skills/my-own/SKILL.md": "mine\n" });
+  const repo = { ...repoOf(clone), skillSyncSkills: ["clean-code", "implement-approved-issues", "revise-pr-feedback"], skillSyncRemove: ["implement-approved-issues", "my-own"] };
+  assert.deepEqual(await skillSync.deliverSkillsForIssue(cfg, repo, ISSUE, logger()), { status: "current" });
+});
+
+test("skillSyncRemove: read from a repo entry", async () => {
+  const dir = mkTmp("cfg-");
+  const path = join(dir, ".ai-agent.json");
+  writeFileSync(path, JSON.stringify({ repos: [
+    { name: "a", githubRepo: "o/a", repoPath: dir, skillSyncSkills: ["clean-code"], skillSyncRemove: ["revise-pr-feedback"], syncOnly: true },
+    { name: "b", githubRepo: "o/b", repoPath: dir },
+  ] }));
+  const cfg = loadConfig(path);
+  assert.deepEqual([...cfg.repos[0].skillSyncRemove], ["revise-pr-feedback"]);
+  assert.equal(cfg.repos[1].skillSyncRemove, undefined);
+});
