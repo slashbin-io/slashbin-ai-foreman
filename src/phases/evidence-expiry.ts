@@ -14,16 +14,13 @@ import { releaseIssues } from "../release-tracker.js";
 /**
  * The `shipped` check, run only for a card already past the maximum age: one search of merged production promotions that
  * mention the card, each hit confirmed by `releaseIssues` (a `- #N` manifest line; a mention in a title or body is not
- * shipping). No age window. A search that errors or finds nothing, a hit the parser rejects, and a card merged only to the
- * base branch all read as not shipped: the card gets the follow-up and is never closed.
+ * shipping). No age window. A search that finds nothing, a hit the parser rejects, and a card merged only to the
+ * base branch all read as not shipped: the card gets the follow-up and is never closed. A search that errors
+ * propagates: the card keeps its label, files nothing, and is retried next pass.
  */
 export function shippedInPromotions(search: (card: number) => Promise<{ body: string }[]>): (card: number) => Promise<boolean> {
   return async (card) => {
-    try {
-      return (await search(card)).some((p) => releaseIssues(p.body).includes(card));
-    } catch {
-      return false;
-    }
+    return (await search(card)).some((p) => releaseIssues(p.body).includes(card));
   };
 }
 

@@ -113,11 +113,14 @@ test("no hit (merged only to develop) gets a follow-up, never a close", async ()
   assert.equal(calls.closed.length, 0);
 });
 
-test("a search error gets a follow-up, never a close", async () => {
+test("a search error keeps the card: no follow-up, no close, label kept", async () => {
   const { d, calls } = deps({ shipped: shippedInPromotions(async () => { throw new Error("search failed"); }), openLabeled: async () => [101] });
   const res = await expireAwaitingEvidence(NOW, MAX, "owner", d, logger);
-  assert.deepEqual(res.followedUp, [101]);
+  assert.deepEqual(res.kept, [101]);
+  assert.deepEqual(res.followedUp, []);
   assert.equal(calls.closed.length, 0);
+  assert.equal(calls.filed.length, 0);
+  assert.equal(calls.released.length, 0);
 });
 
 test("a card under the max age never calls search", async () => {
