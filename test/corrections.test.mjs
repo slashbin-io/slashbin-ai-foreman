@@ -401,3 +401,29 @@ test("the release hold reads each candidate's relations once, however many issue
     setCodeHost(null);
   }
 });
+
+test("the release hold's selection is linear: H=C=16 with no corrective edges costs one lookup per candidate, not per holder and candidate", async () => {
+  const holders = Array.from({ length: 16 }, (_, i) => 100 + i);
+  const cands = Array.from({ length: 16 }, (_, i) => 200 + i);
+  let lookups = 0;
+  let edgeVisits = 0;
+  const relations = new Map(cands.map((n) => [n, { mentions: [], get corrects() { edgeVisits++; return []; } }]));
+  const counting = { get: (n) => { lookups++; return relations.get(n); } };
+  const h = harness();
+  setCodeHost({
+    ...githubCodeHost(),
+    findOpenPromotionPR: async () => ({ number: 90, url: "u", body: holders.map((n) => `- #${n}: t`).join("\n"), headSha: "s" }),
+    getOpenIssues: async () => holders.map((number) => ({ number, title: "t", labels: [] })),
+    unsignedIssues: async () => holders,
+    relationsOf: async () => counting,
+  });
+  try {
+    await withGh(fakeGh(UNTITLED, {}), async (cfg) => {
+      assert.deepEqual(await releaseHeldFixes(h.rt, cfg, cands, h.logger), []);
+    });
+    assert.equal(lookups, cands.length, "one relation lookup per candidate");
+    assert.equal(edgeVisits, cands.length, "each candidate's edges visited once");
+  } finally {
+    setCodeHost(null);
+  }
+});

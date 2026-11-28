@@ -286,9 +286,19 @@ export async function releaseHeldFixes(
     logger.warn(`The release hold's corrections could not be read (${(err instanceof Error ? err.message : String(err)).split("\n")[0]}) — building in queue order`);
     return [];
   }
-  // The candidates that correct any holder: O(holders + candidates + relation edges), not a pass per holder.
-  const holders = new Set(unsigned);
-  return [...new Set(candidates)].filter((n) => relations.get(n)?.corrects.some((h) => h !== n && holders.has(h)));
+  // Index the candidates by what they correct, once (O(candidates + edges)); each holder is then one lookup (O(holders)).
+  // Candidate order, the queue's severity order, is kept.
+  const correctedBy = new Map<number, number[]>();
+  for (const n of new Set(candidates)) {
+    for (const h of relations.get(n)?.corrects ?? []) {
+      if (h === n) continue;
+      const list = correctedBy.get(h);
+      if (list) list.push(n); else correctedBy.set(h, [n]);
+    }
+  }
+  const fixes = new Set<number>();
+  for (const holder of unsigned) for (const n of correctedBy.get(holder) ?? []) fixes.add(n);
+  return [...new Set(candidates)].filter((n) => fixes.has(n));
 }
 
 /**
