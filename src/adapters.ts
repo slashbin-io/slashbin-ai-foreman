@@ -76,6 +76,13 @@ export interface WorkSourceAdapter {
   heldWork?(repoConfig: RepoConfig): ReadonlyArray<WaitingItem>;
 
   /**
+   * Why the picker holds approved item `issueNumber` on a precondition it judged on the item (an open blocker, unmet
+   * Pre-Flight readiness, no acceptance), or null when nothing holds it. Read-only: it announces nothing. An
+   * unreadable precondition is null, not a hold, so a read that keeps failing still surfaces as a stall. Optional.
+   */
+  pickupHold?(repoConfig: RepoConfig, issueNumber: number): Promise<string | null>;
+
+  /**
    * Every item approved and free to build, without `selectWork`'s open-PR
    * cross-check and batch cap: implement labels a PR against it, review counts
    * it to keep a checkout. Optional; never throws (a failed read gives []).
