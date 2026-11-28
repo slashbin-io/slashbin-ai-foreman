@@ -20,7 +20,7 @@
 //
 // So is an approved card the picker holds on a precondition it judged on the card (`held`: an open blocker, unmet
 // Pre-Flight readiness, no acceptance): it waits on that, not on the Foreman. A failed read is not a hold, so a read
-// that keeps failing still stalls (2026-11-28: a service card, held by `issue_closed: #840`, was raised as a Foreman fault).
+// that keeps failing still stalls (2026-11-28: a service card, held by an `issue_closed:` readiness line, was raised as a Foreman fault).
 //
 // Read from the work source's own snapshot, the stage the board shows. A stall starts when the unstick pass
 // first sees the card at the stage (the record keeps that start; nothing earlier is known), and resolves on
