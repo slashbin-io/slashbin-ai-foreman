@@ -2,7 +2,6 @@
 
 import type { RepoConfig } from "../config.js";
 import { ghAsync } from "./gh.js";
-import { extractImplementedIssues, type PrCommit } from "./discovery.js";
 
 /** The newest event time on an issue's timeline (ms); null when it has none. Throws on a failed read. */
 export async function lastIssueActivity(config: RepoConfig, num: number): Promise<number | null> {
@@ -29,17 +28,13 @@ export async function retireLabelledIssue(config: RepoConfig, num: number, label
 }
 
 /**
- * The newest PR merged to the production branch that names issue `num` (any keyword: `Closes`, `Related to`, a `(#N)`
- * headline suffix). It searches GitHub for the issue number instead of listing the latest PRs, so an old merge is found.
- * A merge to develop only does not count: the work has not shipped. Null when there is none. Throws on a failed read.
+ * Whether issue `num` went through a release: its timeline shows one of `releaseLabels` being applied (the labels from the
+ * EM's release authorization on). The Foreman writes those itself, so there is no PR to match by keyword, no search window
+ * and no API node cap; a merge to develop alone never applies them. Throws on a failed read.
  */
-export async function findShippedPr(config: RepoConfig, num: number): Promise<number | null> {
-  const out = await ghAsync(["pr", "list", "--repo", config.githubRepo, "--state", "merged", "--base", config.productionBranch,
-    "--search", `${num} in:title,body`, "--json", "number,title,body,commits,mergedAt", "--limit", "100"], config.repoPath);
-  const prs = JSON.parse(out || "[]") as { number: number; title?: string; body?: string; commits?: PrCommit[]; mergedAt?: string }[];
-  const hits = prs
-    .filter((pr) => pr.mergedAt && pr.number !== num
-      && extractImplementedIssues({ title: pr.title ?? "", body: pr.body ?? "", commits: pr.commits ?? [] }).includes(num))
-    .sort((a, b) => Date.parse(b.mergedAt ?? "") - Date.parse(a.mergedAt ?? ""));
-  return hits[0]?.number ?? null;
+export async function wentThroughRelease(config: RepoConfig, num: number, releaseLabels: string[]): Promise<boolean> {
+  const out = await ghAsync(["api", "--paginate", `repos/${config.githubRepo}/issues/${num}/timeline?per_page=100`,
+    "--jq", '.[] | select(.event == "labeled") | .label.name'], config.repoPath);
+  const names = new Set(out.split("\n").map((l) => l.trim()).filter(Boolean));
+  return releaseLabels.some((l) => names.has(l));
 }

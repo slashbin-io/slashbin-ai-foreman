@@ -255,7 +255,8 @@ export async function runAwaitingEvidenceExpiry(repoConfig: RepoConfig, config: 
         .map((i) => i.number),
       newestEventAt: (n) => host.lastIssueActivity(repoConfig, n),
       readBody: (n) => host.readIssueBody(repoConfig, n),
-      mergedPr: (n) => host.findShippedPr(repoConfig, n),
+      shipped: (n) => host.wentThroughRelease(repoConfig, n,
+        [repoConfig.lifecycleLabels.readyForProd, repoConfig.lifecycleLabels.releasePending, repoConfig.lifecycleLabels.prodVerifyHeld, repoConfig.lifecycleLabels.readyToClose]),
       epicOf: (body) => (repoConfig.epicRefLabel ? (epicRefs(body, repoConfig.epicRefLabel)[0] ?? null) : null),
       fileFollowUp: async (input) => plugin?.fileVerifyFollowUp
         ? await plugin.fileVerifyFollowUp(repoConfig, config, input, logger)

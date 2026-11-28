@@ -16,7 +16,7 @@ function deps(over = {}) {
     openLabeled: async () => [1],
     newestEventAt: async () => NOW - 8 * DAY,
     readBody: async () => BODY,
-    mergedPr: async () => 42,
+    shipped: async () => true,
     epicOf: () => 9,
     fileFollowUp: async (i) => { calls.filed.push(i); return { kind: "filed", issue: 77, url: "https://x/77" }; },
     closeCard: async (n, c) => { calls.closed.push([n, c]); return true; },
@@ -37,13 +37,13 @@ test("evidenceBar falls back to the section, then to a note", () => {
   assert.equal(evidenceBar("no section"), "the card records no evidence bar");
 });
 
-test("a card older than the max age with a merged PR is closed with the bar", async () => {
+test("a card older than the max age that went through a release is closed with the bar", async () => {
   const { d, calls } = deps();
   const r = await expireAwaitingEvidence(NOW, MAX, "owner", d, logger);
   assert.deepEqual(r, { closed: [1], followedUp: [], kept: [] });
   assert.equal(calls.filed.length, 0);
   assert.match(calls.closed[0][1], /evidence this card waited on was not met in .*Done when: dev test passes AND count = 0/s);
-  assert.match(calls.closed[0][1], /PR #42/);
+  assert.match(calls.closed[0][1], /went through a release/);
 });
 
 test("a card inside the max age is left alone", async () => {
@@ -58,8 +58,8 @@ test("off at 0, and an unreadable timeline leaves the card alone", async () => {
   assert.deepEqual(await expireAwaitingEvidence(NOW, MAX, "owner", b.d, logger), none);
 });
 
-test("no merged PR: the follow-up is filed through the plugin and the card is not closed", async () => {
-  const { d, calls } = deps({ mergedPr: async () => null });
+test("never released: the follow-up is filed through the plugin and the card is not closed", async () => {
+  const { d, calls } = deps({ shipped: async () => false });
   const r = await expireAwaitingEvidence(NOW, MAX, "owner", d, logger);
   assert.deepEqual(r, { closed: [], followedUp: [1], kept: [] });
   assert.equal(calls.closed.length, 0);
@@ -72,7 +72,7 @@ test("no merged PR: the follow-up is filed through the plugin and the card is no
 });
 
 test("a failed filing changes nothing and keeps the card", async () => {
-  const { d, calls } = deps({ mergedPr: async () => null, fileFollowUp: async () => ({ kind: "failed", detail: "boom" }) });
+  const { d, calls } = deps({ shipped: async () => false, fileFollowUp: async () => ({ kind: "failed", detail: "boom" }) });
   const r = await expireAwaitingEvidence(NOW, MAX, "owner", d, logger);
   assert.deepEqual(r, { closed: [], followedUp: [], kept: [1] });
   assert.equal(calls.released.length, 0);
