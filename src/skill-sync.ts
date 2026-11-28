@@ -703,7 +703,9 @@ export class SkillSync {
       if (commits.length === 0) return null;
       const me = (await git(["var", "GIT_AUTHOR_IDENT"], cwd)).replace(/ \d+ [+-]\d{4}$/, "");
       const subjectRe = new RegExp(`^chore\\(skills\\): sync .+ \\(#${issue.number}\\)$`);
-      const selectedDirs = a.names.map((n) => `${a.target}/${n}/`);
+      // A skill now listed for removal was selected when an earlier delivery wrote it: it is still the Foreman's.
+      const dropped = (a.remove ?? []).filter((n) => !a.names.includes(n));
+      const selectedDirs = [...a.names, ...dropped].map((n) => `${a.target}/${n}/`);
       const versionRe = new RegExp(`^chore\\(skills\\): sync .+ from .+@([0-9a-f]{7,40}) \\(#${issue.number}\\)$`);
       for (const [sha, parents, author, subject, tree, body] of commits) {
         if (parents.trim().split(/\s+/).length !== 1) return null; // a merge: the person brought the base in
@@ -738,7 +740,8 @@ export class SkillSync {
         // a current one already was. So each such skill's tree in the commit must be the golden's, file set and bytes.
         // A file a person put back (restoring what the delivery deleted, even when that undoes the skill's whole diff),
         // or an edited byte, breaks that and the branch is left alone.
-        for (const name of a.names) {
+        const touched = (n: string) => changes.some(([, path]) => path.startsWith(`${a.target}/${n}/`));
+        for (const name of [...a.names, ...dropped.filter(touched)]) {
           const files = then.skills.get(name);
           if (!files) continue; // not in the golden then: the diff check above proved the delivery left it alone
           const entries = await lsTree(cwd, sha, `${a.target}/${name}`);

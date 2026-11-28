@@ -586,6 +586,34 @@ test("cutover: an untouched delivery made before the removal list is refreshed t
   assert.equal(git(bare, "show", `${out.sha}:.claude/skills/clean-code/SKILL.md`), "clean v1");
 });
 
+test("cutover: a pristine pre-tree delivery of a skill now listed for removal is refreshed without it (Tech Lead S2 on #430)", async () => {
+  const cfg = cfgFor(makeGolden(tmp));
+  const clone = makeRepo(tmp, { ...STALE, ".claude/skills/clean-code/SKILL.md": "clean v1\n" });
+  const first = await skillSync.deliverSkillsForIssue(cfg, { ...repoOf(clone), skillSyncSkills: ["clean-code", "implement-approved-issues"] }, ISSUE, logger());
+  assert.equal(first.status, "delivered");
+  const bare = join(tmp, "svc.git");
+  asLegacy(bare, first.branch, "legacy-cutover");
+  const lg = logger();
+  const out = await skillSync.deliverSkillsForIssue(cfg, HUMAN_ONLY(clone), ISSUE, lg, noPr);
+  assert.equal(out.status, "refreshed", lg.lines.join("\n"));
+  assert.equal(git(bare, "ls-tree", "-r", "--name-only", out.sha, ".claude/skills/implement-approved-issues", ".claude/skills/revise-pr-feedback"), "");
+  assert.equal(git(bare, "show", `${out.sha}:.claude/skills/clean-code/SKILL.md`), "clean v1");
+});
+
+test("cutover: a pre-tree delivery whose removed-skill file a person edited is left alone", async () => {
+  const cfg = cfgFor(makeGolden(tmp));
+  const clone = makeRepo(tmp, { ...STALE, ".claude/skills/clean-code/SKILL.md": "clean v1\n" });
+  const first = await skillSync.deliverSkillsForIssue(cfg, { ...repoOf(clone), skillSyncSkills: ["clean-code", "implement-approved-issues"] }, ISSUE, logger());
+  const bare = join(tmp, "svc.git");
+  const work = asLegacy(bare, first.branch, "legacy-cutover-edited");
+  writeFileSync(join(work, ".claude/skills/implement-approved-issues/SKILL.md"), "my edit\n");
+  git(work, "add", "-A"); git(work, "commit", "--quiet", "--amend", "--no-edit"); git(work, "push", "--quiet", "--force", "origin", first.branch);
+  const tip = git(bare, "rev-parse", first.branch);
+  const out = await skillSync.deliverSkillsForIssue(cfg, HUMAN_ONLY(clone), ISSUE, logger(), noPr);
+  assert.notEqual(out.status, "refreshed");
+  assert.equal(git(bare, "rev-parse", first.branch), tip);
+});
+
 test("cutover: a skill the repo also selects, or a name the golden does not carry, is never removed", async () => {
   const cfg = cfgFor(makeGolden(tmp));
   const clone = makeRepo(tmp, { ...CURRENT, ".claude/skills/my-own/SKILL.md": "mine\n" });
