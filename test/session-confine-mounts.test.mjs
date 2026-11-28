@@ -195,3 +195,26 @@ test("dns probe: a NODE_OPTIONS preload outside the fence does not fail the star
   assert.equal(r.status, 0, r.stderr);
   assert.deepEqual(JSON.parse(r.stdout.trim()), [], "the probe drops NODE_OPTIONS, whose preload the fence cannot see");
 });
+
+test("browsers: the host's Playwright cache is bound read-only when it exists, and absent otherwise (EM#3300)", async () => {
+  setStateDir(join(tmp, "state-browsers"));
+  const cwd = join(tmp, "browsers-checkout");
+  mkdirSync(cwd, { recursive: true });
+  const home = await createSessionHome();
+  const savedHome = process.env.HOME;
+  const hostHome = join(tmp, "host-home");
+  mkdirSync(hostHome, { recursive: true });
+  process.env.HOME = hostHome;
+  try {
+    const cache = join(hostHome, ".cache", "ms-playwright");
+    const roBinds = () => {
+      const { args } = confineCommand("true", [], { cwd, home });
+      return args.flatMap((a, i) => (a === "--ro-bind" ? [args[i + 1]] : []));
+    };
+    assert.ok(!roBinds().includes(cache), "no cache, no bind");
+    mkdirSync(cache, { recursive: true });
+    assert.ok(roBinds().includes(cache), "the cache is bound read-only");
+  } finally {
+    process.env.HOME = savedHome;
+  }
+});

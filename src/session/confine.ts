@@ -151,6 +151,10 @@ export function confineCommand(bin: string, args: string[], opts: ConfineOptions
     if (binPath !== binReal) out.push("--ro-bind", binReal, binPath);
   }
   ro.add(dirname(dirname(real(process.execPath))));
+  // Playwright's browsers, at their default home under the host home, which the scratch home hides: e2e and
+  // Lighthouse runs start them. Read-only, and only when the host has them.
+  const browsers = join(hostHome, ".cache", "ms-playwright");
+  if (existsSync(browsers)) ro.add(real(browsers));
   for (const p of read) ro.add(real(p));
 
   const rw = new Set([real(cwd), ...worktreeGitDirs(cwd, hostHome), ...write.map(real)]);
