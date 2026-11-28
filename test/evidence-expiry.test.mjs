@@ -1,7 +1,7 @@
 // `awaiting evidence` expires like a prod hold: same max age, a follow-up through the EM plugin, closed with the bar quoted.
 import test from "node:test";
 import assert from "node:assert/strict";
-import { evidenceBar, expireAwaitingEvidence, shippedInPromotions, AWAITING_EVIDENCE_LABEL } from "../dist/phases/evidence-expiry.js";
+import { evidenceBar, expireAwaitingEvidence, shippedInPromotions, PROMOTION_WINDOW, AWAITING_EVIDENCE_LABEL } from "../dist/phases/evidence-expiry.js";
 
 const DAY = 86_400_000;
 const NOW = Date.parse("2026-11-28T12:00:00Z");
@@ -105,12 +105,20 @@ test("a card merged only to develop is in no promotion: follow-up, never a close
   assert.equal(calls.closed.length, 0);
 });
 
-test("a card older than the last 50 promotions is unknown: follow-up, never a close", async () => {
+test("a card in the 51st promotion back still counts as shipped", async () => {
   const all = [...Array.from({ length: 50 }, (_, i) => promo(1000 + i)), promo(101)];
+  const { d, calls } = deps({ shipped: shippedInPromotions(async (limit) => all.slice(0, limit)), openLabeled: async () => [101] });
+  const res = await expireAwaitingEvidence(NOW, MAX, "owner", d, logger);
+  assert.deepEqual(res.closed, [101]);
+  assert.equal(calls.filed.length, 0);
+});
+
+test("a card older than the whole promotion window is unknown: follow-up, never a close", async () => {
+  const all = [...Array.from({ length: PROMOTION_WINDOW }, (_, i) => promo(5000 + i)), promo(101)];
   let asked = 0;
   const { d, calls } = deps({ shipped: shippedInPromotions(async (limit) => { asked = limit; return all.slice(0, limit); }), openLabeled: async () => [101] });
   const res = await expireAwaitingEvidence(NOW, MAX, "owner", d, logger);
-  assert.equal(asked, 50);
+  assert.equal(asked, PROMOTION_WINDOW);
   assert.deepEqual(res.followedUp, [101]);
   assert.equal(calls.closed.length, 0);
 });

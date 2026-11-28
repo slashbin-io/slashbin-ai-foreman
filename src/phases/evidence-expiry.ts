@@ -11,8 +11,8 @@ import type { Logger } from "../logger.js";
 import { formatWait } from "../backoff.js";
 import { releaseIssues } from "../release-tracker.js";
 
-/** How many of the latest merged production promotions are read for "shipped". A card in none of them is unknown, not shipped. */
-export const PROMOTION_WINDOW = 50;
+/** How many of the latest merged production promotions are read (every promotion a repo has, in practice: a card shipped long ago still closes) for "shipped". A card in none of them is unknown, not shipped. */
+export const PROMOTION_WINDOW = 1000;
 
 /**
  * The `shipped` check: a card is shipped only when a merged production promotion's body names it (a `- #N` manifest line, read by `releaseIssues`). The window is read once, on first use. A card merged only to the base branch is in no promotion, and one older
