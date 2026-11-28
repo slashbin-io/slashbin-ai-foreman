@@ -15,6 +15,7 @@ import { createRepoIdentity } from "../dist/paperclip/repo-identity.js";
 
 /** The differences, one line each, naming the stage and the side that lacks it. */
 function drift(foremanKeys, served) {
+  // A catalog that predates lifecycleOnlyKeys declares no intentional difference: every key it lacks is drift.
   const catalog = new Set([...served.stages.flatMap((s) => s.childStageKeys ?? []), ...(served.lifecycleOnlyKeys ?? [])]);
   const foreman = new Set(foremanKeys);
   return [
@@ -51,6 +52,19 @@ test("the drift read goes through the shared registry client and returns the ser
   assert.deepEqual(await id.callTool("list_stages", { mode: "full" }), answer);
 });
 
+test("a catalog without lifecycleOnlyKeys reports blocked and needsRuling as absent from the catalog side", () => {
+  const board = STAGES.filter((k) => k !== "blocked" && k !== "needsRuling");
+  const diffs = drift(STAGES, { stages: [{ childStageKeys: board }] });
+  assert.equal(diffs.length, 2);
+  assert.match(diffs.join("\n"), /"blocked".*catalog side lacks it/);
+  assert.match(diffs.join("\n"), /"needsRuling".*catalog side lacks it/);
+});
+
+test("the process route is derived from the registry route", () => {
+  assert.equal(processUrl("https://router.example/registry/mcp"), "https://router.example/process/mcp");
+  assert.throws(() => processUrl("https://router.example/other"), /\/process\/mcp/);
+});
+
 test("a failed read rejects, it never passes", async () => {
   const id = createRepoIdentity({ url: "http://registry.invalid/mcp", fetch: async () => new Response("no", { status: 400 }) });
   await assert.rejects(id.callTool("list_stages", { mode: "full" }), /registry answered 400/);
@@ -58,15 +72,21 @@ test("a failed read rejects, it never passes", async () => {
 
 const url = process.env.AI_AGENT_PAPERCLIP_REGISTRY_URL;
 
+/** The router serves each bundle on its own route; the configured registry URL is the /registry/mcp route, process.list_stages is on /process/mcp of the same router. */
+export function processUrl(registryUrl) {
+  if (!/\/registry\/mcp\/?$/.test(registryUrl)) throw new Error(`AI_AGENT_PAPERCLIP_REGISTRY_URL does not end in /registry/mcp, so the router's /process/mcp route cannot be derived from it`);
+  return registryUrl.replace(/\/registry\/mcp\/?$/, "/process/mcp");
+}
+
 test("STAGES and the catalog's served Foreman stages are the same set", { skip: url ? false : "AI_AGENT_PAPERCLIP_REGISTRY_URL is unset: the catalog cannot be read, so the comparison is skipped, not passed" }, async () => {
-  const id = createRepoIdentity({ url, apiKey: process.env.AI_AGENT_PAPERCLIP_REGISTRY_API_KEY });
   let answer;
   try {
+    const id = createRepoIdentity({ url: processUrl(url), apiKey: process.env.AI_AGENT_PAPERCLIP_REGISTRY_API_KEY });
     answer = await id.callTool("list_stages", { mode: "full" });
   } catch (e) {
     assert.fail(`could not read the catalog's served stages from the registry: ${e instanceof Error ? e.message : String(e)}`);
   }
-  assert.ok(Array.isArray(answer?.stages) && Array.isArray(answer?.lifecycleOnlyKeys), "the served answer carries no stages or lifecycleOnlyKeys: the catalog predates review-only mode");
+  assert.ok(Array.isArray(answer?.stages), "the served answer carries no stages");
   const diffs = drift(STAGES, answer);
   assert.deepEqual(diffs, [], `Foreman STAGES and the catalog's Foreman stages differ:\n${diffs.join("\n")}`);
 });
