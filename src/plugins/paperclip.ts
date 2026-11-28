@@ -7,6 +7,7 @@ import { createCardBlockStore } from "../card-blocks.js";
 import { createRepoIdentity } from "../paperclip/repo-identity.js";
 import type { IssueRecordStore } from "../issue-records.js";
 import type { LegacyImport } from "../legacy-records.js";
+import { setProcessModeSource } from "./registry.js";
 import type { ForemanPlugin, PluginContext, PluginCatalogEntry } from "./contract.js";
 
 /**
@@ -25,6 +26,17 @@ export function mirrorSecrets(sessionEnv: readonly string[], apiKey: string | un
   }
   return out.sort((a, b) => b.value.length - a.value.length);
 }
+
+const identities = new Map<string, ReturnType<typeof createRepoIdentity>>();
+// The registry is read for the review intake whether or not the board mirror is on, so the reader is installed at load.
+setProcessModeSource(async (config, githubRepo) => {
+  const { registryUrl, registryApiKey } = config.paperclip ?? {};
+  if (!registryUrl) throw new Error("no registry configured (paperclip.registryUrl)");
+  const key = `${registryUrl}\n${registryApiKey ?? ""}`;
+  let id = identities.get(key);
+  if (!id) identities.set(key, (id = createRepoIdentity({ url: registryUrl, apiKey: registryApiKey })));
+  return (await id.policyOf(githubRepo)).processMode;
+});
 
 /**
  * Paperclip (EM#417): an observer of the Foreman's steps, never a work source.

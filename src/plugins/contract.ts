@@ -112,6 +112,13 @@ export type LandedReview =
   /** No verdict for this range (it could not run, a usage error, a failed write, a timeout, a trailer for another range): ask again later. */
   | { kind: "retry"; reason: string };
 
+/** The outcome of one review-only head offer: `done` the review ran; `retry` nothing was written; `refused`/`failed` it did not complete. */
+export type HeadReview =
+  | { kind: "done" }
+  | { kind: "retry"; reason: string }
+  | { kind: "refused"; reason: string }
+  | { kind: "failed"; reason: string };
+
 export interface Reviewer {
   /**
    * Review (and merge) one PR. `noMerge` approves and stops; `mergeApprovedSha`
@@ -136,6 +143,14 @@ export interface Reviewer {
     repo: RepoConfig, config: AgentConfig, from: string, to: string, logger: Logger,
     abortSignal?: AbortSignal, transcriptPath?: string,
   ): Promise<LandedReview>;
+  /**
+   * Start a review-only review of PR `pr` at exactly `sha` (never merges). The reviewer writes the head's status
+   * itself; the caller writes none. Optional: a reviewer without it cannot serve a review-only repo.
+   */
+  reviewHead?(
+    repo: RepoConfig, config: AgentConfig, pr: number, sha: string, logger: Logger,
+    abortSignal?: AbortSignal, transcriptPath?: string,
+  ): Promise<HeadReview>;
 }
 
 /** Errors a verifier excluded from a verification, with the evidence links beside them. */

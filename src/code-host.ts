@@ -127,6 +127,19 @@ export interface DependencyChange {
 
 // From github/review-queue.ts.
 
+/** One open PR and the full SHA of its head. */
+export interface OpenPrHead {
+  number: number;
+  sha: string;
+}
+
+/** A commit status as the review intake reads it. `updatedAt` is ISO UTC. */
+export interface HeadStatus {
+  state: string;
+  description: string;
+  updatedAt: string;
+}
+
 export interface PendingRevisionPR {
   number: number;
   url: string;
@@ -674,6 +687,12 @@ export interface CodeHost {
   /** The PR's state read live. Throws when GitHub cannot say (EM#1244 f5). */
   readPrState(config: RepoConfig, prNumber: number, logger: Logger): Promise<"OPEN" | "MERGED" | "CLOSED">;
   hasPendingRevisions(config: RepoConfig, logger: Logger): Promise<boolean>;
+  /** Every open PR's number and full head SHA, read live. Throws when it cannot be read. */
+  listOpenPrHeads(config: RepoConfig, logger: Logger): Promise<OpenPrHead[]>;
+  /** The newest commit status for `context` on `sha`, or null when the sha has none. Throws when it cannot be read. */
+  readHeadStatus(config: RepoConfig, sha: string, context: string, logger: Logger): Promise<HeadStatus | null>;
+  /** Whether an active ruleset on the repo requires the status check `context`. Throws when it cannot be read. */
+  requiresStatusCheck(config: RepoConfig, context: string, logger: Logger): Promise<boolean>;
 
   // Skip holds.
   escalatedReason(reason: string, attempts: number): string;

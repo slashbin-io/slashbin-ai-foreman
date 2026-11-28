@@ -156,6 +156,18 @@ export function roleFor<R extends AgentRole>(role: R, config: AgentConfig): NonN
   return undefined;
 }
 
+type ProcessModeSource = (config: AgentConfig, githubRepo: string) => Promise<string | null>;
+let processModeSource: ProcessModeSource | null = null;
+/** The registry reader the Paperclip module installs when it loads; it needs no started plugin, so board mirroring may stay off. */
+export function setProcessModeSource(fn: ProcessModeSource | null): void {
+  processModeSource = fn;
+}
+/** The registry's process mode for a repo; throws when no reader is installed or the registry cannot answer. */
+export async function repoProcessMode(config: AgentConfig, githubRepo: string): Promise<string | null> {
+  if (!processModeSource) throw new Error("no registry reader installed");
+  return processModeSource(config, githubRepo);
+}
+
 /** The change signal of the first started plugin that fills the role, or undefined: then every repo is polled as always. */
 export function changeSignal(): ChangeSignal | undefined {
   return pluginsFor("changeSignal").find((p) => p.changeSignal)?.changeSignal;

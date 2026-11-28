@@ -23,12 +23,23 @@ export interface RepoIdentity {
   keyOf(repo: string): Promise<string>;
   /** The registry's customer GitHub labels (the non-null `systems.github_label` of each live customer). Memoised, failure included, until the next `beginScan`. Throws when the registry cannot answer. */
   customerLabels(): Promise<string[]>;
+  /**
+   * The repo's whole-repo delivery policy, read live (never memoised: the registry decides each pass).
+   * Throws when the registry cannot answer or has no whole-repo row; the caller skips the repo.
+   */
+  policyOf(repo: string): Promise<RepoPolicy>;
   /** One call of any named tool on the registry's MCP endpoint: the tool's answer, unmemoised. Throws when the registry cannot answer. */
   callTool(tool: string, args?: object): Promise<unknown>;
   /** A new scan: drop answers older than REPO_KEY_TTL_MS and reopen the MCP session. */
   beginScan(): void;
   /** HTTP requests sent to the registry so far (retries included), for the scan's log line. */
   requests?(): number;
+}
+
+/** The process mode the registry holds for a repo, and whether it requires a review. `processMode` is null when the registry has none. */
+export interface RepoPolicy {
+  processMode: string | null;
+  reviewRequired: boolean;
 }
 
 /** `status` is the HTTP status, 0 when no response arrived, unset for an answer that is itself the failure. */
@@ -53,7 +64,7 @@ export type RepoIdentityOptions = {
   now?: () => number;
 };
 
-type Answer = { kind?: unknown; key?: unknown; customers?: unknown };
+type Answer = { kind?: unknown; key?: unknown; customers?: unknown; service?: unknown; error?: unknown };
 
 /** The JSON-RPC message in a response body, whether the server sent JSON or one SSE event. */
 function rpcMessage(body: string, contentType: string): { result?: unknown; error?: { message?: string } } {
@@ -158,7 +169,17 @@ export function createRepoIdentity(opts: RepoIdentityOptions): RepoIdentity {
     return labels.filter((l): l is string => typeof l === "string" && l !== "");
   };
 
+  const askPolicy = async (repo: string): Promise<RepoPolicy> => {
+    // ONE explicit artifact_path: null reads the whole-repo row; a missing row is an error, never a path-row fallback.
+    const a = await call("service_detail", { repo, artifact_path: null });
+    if (typeof a.error === "string") throw new RepoIdentityError(`service_detail: ${a.error}`);
+    const delivery = (a.service as { delivery?: { processMode?: unknown; reviewRequired?: unknown } } | undefined)?.delivery;
+    if (!delivery) throw new RepoIdentityError(`service_detail answered no delivery policy for ${repo}`);
+    return { processMode: typeof delivery.processMode === "string" ? delivery.processMode : null, reviewRequired: delivery.reviewRequired === true };
+  };
+
   return {
+    policyOf: askPolicy,
     keyOf(repo) {
       const have = memo.get(repo);
       if (have && now() - have.at < REPO_KEY_TTL_MS) return have.p;

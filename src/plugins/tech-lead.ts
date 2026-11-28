@@ -8,7 +8,7 @@ import { setContractReaderEnv } from "../handoff-contract.js";
 import { milestoneReader, withoutProgressLines, type ReviewMilestone } from "../review-progress.js";
 import { isTransientGhError } from "../github/gh.js";
 import { cliTail, lastLine, refusalReason, parseReviewTrailerRecords, runAgentCli } from "./agent-cli.js";
-import type { ForemanPlugin, LandedReview, LandedVerdict, PromotionApproval, Reviewer, ReviewFallback, PluginCatalogEntry } from "./contract.js";
+import type { ForemanPlugin, HeadReview, LandedReview, LandedVerdict, PromotionApproval, Reviewer, ReviewFallback, PluginCatalogEntry } from "./contract.js";
 
 /**
  * The Tech Lead (slashbin_ai_tech_lead, EM#427) as the reviewer
@@ -150,6 +150,35 @@ export async function reviewViaTechLead(
 }
 
 /**
+ * Start the Tech Lead's review of PR `prNumber` at exactly `sha`, for a repo whose PRs the Foreman does not
+ * build (`review-pr --sha <head> --no-merge`). The Tech Lead writes every status, `pending` included; the Foreman
+ * writes none. Exit 0 = the review ran and its status is written; 3 = it wrote nothing (retry); 4 = refused;
+ * anything else is a failure that may have written.
+ */
+export async function reviewHeadViaTechLead(
+  repoConfig: RepoConfig,
+  agentConfig: AgentConfig,
+  prNumber: number,
+  sha: string,
+  logger: Logger,
+  abortSignal?: AbortSignal,
+  transcriptPath?: string,
+): Promise<HeadReview> {
+  const techLead = agentConfig.techLeadPath;
+  if (!techLead) return { kind: "retry", reason: "techLeadPath not configured" };
+  if (!process.env.TECHLEAD_GITHUB_KEY) return { kind: "retry", reason: "TECHLEAD_GITHUB_KEY not set: refusing to review without Tech Lead attribution" };
+  logger.info(`Offering PR #${prNumber} head ${sha.slice(0, 10)} on ${repoConfig.githubRepo} to the Tech Lead (review only)`);
+  const r = await runAgentCli(techLead, "bin/tech-lead.mjs",
+    ["review-pr", "--repo", repoConfig.githubRepo, "--pr", String(prNumber), "--sha", sha, "--no-merge"],
+    buildTechLeadEnv(agentConfig, repoConfig), agentConfig, agentConfig.reviewMaxDurationMs, abortSignal, transcriptPath);
+  if (r.timedOut) return { kind: "failed", reason: "Tech Lead review timed out" };
+  if (r.code === 0) return { kind: "done" };
+  if (r.code === 3) return { kind: "retry", reason: lastLine(r) || "reviewer unavailable" };
+  if (r.code === 4) return { kind: "refused", reason: refusalReason(r) || "refused" };
+  return { kind: "failed", reason: `exit ${r.code}: ${cliTail(r)}` };
+}
+
+/**
  * A GitHub POST that came back empty: `gh` could not decode the (absent) body, so the write may or may not have
  * landed. The Tech Lead's `review-pr` retries reads only; this exact signature is a `gh api` call with
  * `--method POST` / `-X POST` AND `unexpected end of JSON input` on one line. A bare parse error (a programming
@@ -265,7 +294,7 @@ export class TechLeadPlugin implements ForemanPlugin {
     requires: { config: ["techLeadPath", "reviewEnabled"], env: ["TECHLEAD_GITHUB_KEY"] },
     whenOff: "No automated review: each PR waits for a person to review and merge it, and the Foreman records the merge and carries on. The release stage cannot run (it needs a reviewer and a deployer), so a release PR waits for a person.",
   };
-  readonly reviewer: Reviewer = { reviewPr: reviewViaTechLead, approvePromotion: approvePromotionViaTechLead, reviewLanded: reviewLandedViaTechLead };
+  readonly reviewer: Reviewer = { reviewPr: reviewViaTechLead, approvePromotion: approvePromotionViaTechLead, reviewLanded: reviewLandedViaTechLead, reviewHead: reviewHeadViaTechLead };
   enabled(config: AgentConfig): boolean {
     return Boolean(config.techLeadPath);
   }

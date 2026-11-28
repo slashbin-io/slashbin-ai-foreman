@@ -7,6 +7,7 @@ import type { Logger } from "../logger.js";
 import type { SessionEvent, SessionReport } from "../adapters.js";
 import { emit, advance, wantsSessionReports, workSourceFor } from "../work-source.js";
 import type { ReviewTrailer } from "../session/protocol.js";
+import { runReviewIntake } from "../review-intake.js";
 import { roleFor } from "../plugins/registry.js";
 import { REVIEW_MILESTONES, ReviewProgressRelay } from "../review-progress.js";
 import { isUpstreamBlocked } from "../upstream-backoff.js";
@@ -30,6 +31,8 @@ export async function tryReview(
   cycleNumber: number,
   events?: CycleEvent[],
 ): Promise<boolean> {
+  // A sync-only repo is never built or merged by the Foreman; the review lane runs only the intake there.
+  if (repoConfig.syncOnly) return await runReviewIntake(rt, repoConfig, config, logger.child({ cycle: cycleNumber, repo: repoConfig.name, phase: "review-intake" }), events);
   // QA before the merge (config.qaBeforeMerge): the Tech Lead approves without merging, QA runs on the
   // approved head, and only a PASS merges. An approved PR waiting on QA is QA's, never offered to the
   // Tech Lead again; and the QA that follows an approval runs in the same pass.

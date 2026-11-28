@@ -526,7 +526,7 @@ test("syncOnly: read from a repo entry; a repo without it is not sync-only", asy
 
 test("stage wiring: a sync-only repo runs only skill-deliver, others never run it, and a human repo is not onboarded, mirrored or labelled", async () => {
   const orch = readFileSync(join(root, "src", "orchestrator.ts"), "utf8");
-  assert.match(orch, /!!repoConfig\.syncOnly !== delivers\) return \{ processed: 0/);
+  assert.match(orch, /!!repoConfig\.syncOnly !== delivers && !\(repoConfig\.syncOnly && reviews\)\) return \{ processed: 0/, "only the review lane (the review intake) joins skill-deliver on a sync-only repo");
   assert.ok(orch.indexOf("!!repoConfig.syncOnly !== delivers") < orch.indexOf("onboardRepo"), "the sync-only gate runs before onboarding");
   assert.match(orch, /if \(!repoConfig\.syncOnly\) \{\s*if \(config\.onboarding[\s\S]*?importLegacyRecords/, "onboarding and the records import are skipped for a sync-only repo");
   assert.match(orch, /!repoConfig\.syncOnly && \(snapshot === "always"/, "a sync-only lane pass publishes no board snapshot");

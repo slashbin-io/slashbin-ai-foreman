@@ -246,6 +246,8 @@ export class PaperclipMirror implements WorkObserver {
       // A promotion PR owns the item; its card moves on the release event, not here.
       case "promoted": return;
       case "promotionStall": return;
+      // No card carries a repo-level notice; the daemon logs it.
+      case "repoNotice": return;
       default: {
         const never: never = event;
         return never;
