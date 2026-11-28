@@ -27,6 +27,7 @@ import type { Logger } from "../logger.js";
 import { formatGhError, getOpenIssues, hasLabel } from "./cache.js";
 import { commentOnIssue } from "./ci-gate.js";
 import { ghAsync } from "./gh.js";
+import { MERGED_PR_WINDOW } from "./release.js";
 import { hasCommentContaining } from "./pr-comments.js";
 import { extractImplementedIssues, type PrCommit } from "./discovery.js";
 import type { PromotionIssue } from "./promotion.js";
@@ -93,7 +94,7 @@ async function readPr(prViews: PrViews, repo: string, pr: number, cwd: string): 
 export async function prefetchMerged(prViews: PrViews, wanted: ReadonlySet<number>, repo: string, base: string, cwd: string): Promise<void> {
   try {
     const listed = JSON.parse((await ghAsync(["pr", "list", "--repo", repo, "--state", "merged", "--base", base,
-      "--json", "number,state,title,body,headRefName,commits", "--limit", "100"], cwd)) || "[]") as (Partial<PrView> & { number: number })[];
+      "--json", "number,state,title,body,headRefName,commits", "--limit", String(MERGED_PR_WINDOW)], cwd)) || "[]") as (Partial<PrView> & { number: number })[];
     for (const v of listed) {
       if (!wanted.has(v.number) || v.state !== "MERGED") continue;
       prViews.set(`${repo}#${v.number}`, {

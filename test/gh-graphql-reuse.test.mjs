@@ -23,7 +23,7 @@ echo "$1 $2 $3" >> "${log}"
 case "$1 $2" in
   "pr list")
     case "$*" in
-      *merged*) printf '[{"number":5,"state":"MERGED","title":"a","body":"Closes #40","headRefName":"x","commits":[]},{"number":7,"state":"MERGED","title":"b","body":"Closes #41","headRefName":"y","commits":[]}]' ;;
+      *merged*) echo "$*" > "${join(dir, "merged-args")}"; printf '[{"number":5,"state":"MERGED","title":"a","body":"Closes #40","headRefName":"x","commits":[]},{"number":7,"state":"MERGED","title":"b","body":"Closes #41","headRefName":"y","commits":[]}]' ;;
       *) printf '[{"number":7,"headRefName":"f7","isDraft":false,"mergeStateStatus":"%s"}]' "$(cat "${mergeState}")" ;;
     esac ;;
   "api repos/o/r/compare"*) printf '%s\\n' '{"sha":"a1","headline":"Merge pull request #5 from o/x"}' '{"sha":"a2","headline":"Merge pull request #7 from o/y"}' ;;
@@ -78,6 +78,15 @@ test("a REST write to the repo drops it too", async () => {
   assert.equal(lists(), 1);
 });
 
+test("a short-form -X REST write (no --repo) drops it too", async () => {
+  reset();
+  await sweep();
+  await ghAsync(["api", "-X", "PUT", "repos/a/x/pulls/7/update-branch"], tmpdir());
+  writeFileSync(log, "");
+  await sweep();
+  assert.equal(lists(), 1);
+});
+
 test("a base branch move re-reads", async () => {
   reset();
   await sweep();
@@ -120,4 +129,5 @@ test("carried merges: one pr list, no pr view per merge", async () => {
   assert.deepEqual(merges.map((m) => [m.pr, m.issues]), [[5, [40]], [7, [41]]]);
   assert.equal(calls().filter((c) => c.startsWith("pr view")).length, 0);
   assert.equal(lists(), 1);
+  assert.match(readFileSync(join(dir, "merged-args"), "utf8"), /--limit 40\b/, "batch stays inside the node cap");
 });

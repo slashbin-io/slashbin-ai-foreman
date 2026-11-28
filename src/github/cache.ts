@@ -123,8 +123,8 @@ export function invalidateSnapshotIfMutating(args: string[]): void {
   // `gh api --method POST/PATCH/PUT/DELETE` can label, merge, or retarget
   // anything, and the URL shape varies too much to attribute reliably. Clear
   // everything — conservative, and a cache miss only costs one request.
-  const methodIdx = args.indexOf("--method");
-  if (args[0] === "api" && methodIdx >= 0 && args[methodIdx + 1] !== "GET") {
+  const methodIdx = args.findIndex((a) => a === "--method" || a === "-X");
+  if (args[0] === "api" && methodIdx >= 0 && args[methodIdx + 1]?.toUpperCase() !== "GET") {
     reads.issues.clear();
     reads.prs.clear();
     reads.sweeps.clear();
