@@ -81,6 +81,7 @@ export function startDaemon(rt: ForemanRuntime, config: AgentConfig, logger: Log
     refreshGate: (repos) => gate.dueRepos("state", repos),
     carryGate: (repo) => gate.due("carry", repo),
     driftGate: (repo, branches) => gate.branchesDue("drift", repo, branches),
+    sweepGate: (repo, branches) => gate.branchesDue("sweep", repo, branches),
   });
 
   // The Foreman's own in-flight work, beside the GitHub view: every step the work

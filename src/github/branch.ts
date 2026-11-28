@@ -1,7 +1,7 @@
 // Branch state: the post-implement self-check, remote heads, and branch-drift sync PRs.
 
 import type { Logger } from "../logger.js";
-import { findOpenPrs, formatGhError, knownNoOpenPrs } from "./cache.js";
+import { findOpenPrs, formatGhError, knownNoOpenPrs, openPrsVersion, reads } from "./cache.js";
 import { syncBranchName } from "../foreman-branch.js";
 import { ghAsync, ghAsTechLeadAsync, ghHttpStatus, isBackoffRefusal } from "./gh.js";
 import { DEFAULT_GITHUB_CONVENTIONS, fillTitle, signed, type GithubConventions } from "./conventions.js";
@@ -380,6 +380,15 @@ async function updateBehindBranch(repo: string, prNumber: number, cwd: string, l
   }
 }
 
+/** Longest a sweep result is replayed with no signal that anything moved. */
+export const SWEEP_REUSE_MS = 5 * 60_000;
+let sweepGate: ((repo: string, branches: readonly string[]) => Promise<boolean>) | null = null;
+/** Install the base-branch-move gate for the sweep (daemon wiring). Null: the sweep always reads live. */
+export function configureSweepGate(due: ((repo: string, branches: readonly string[]) => Promise<boolean>) | null): void {
+  sweepGate = due;
+  reads.sweeps.clear();
+}
+
 /**
  * One read of every open PR's `mergeStateStatus` against the base, each cycle, whatever the review phase
  * did or did not admit (a PR with a current approval, or one whose review attempts are spent, is never offered
@@ -395,12 +404,30 @@ export async function sweepOpenPrStates(repo: string, baseBranch: string, produc
     for (const key of [...refusals.keys()]) if (key.startsWith(`${repo}#`)) refusals.delete(key);
     return [];
   }
-  const out = await ghAsync(["pr", "list", "--repo", repo, "--state", "open", "--base", baseBranch, "--json", "number,headRefName,isDraft,mergeStateStatus", "--limit", "100"], cwd);
-  const prs: { number: number; headRefName: string; isDraft: boolean; mergeStateStatus: string }[] = JSON.parse(out || "[]");
+  // 2026-11-28: ~1,560 GraphQL calls an hour, one `pr list` per repo with an open PR every pass. The answer is a
+  // function of the PR set (head commit, last update), the base branch's head, and checks; it is replayed while the
+  // fleet state's PR versions are unchanged and the base did not move (the same gate the drift read uses), for at
+  // most SWEEP_REUSE_MS, and never once a write was made to the repo (`invalidateSnapshotIfMutating`). A replay
+  // still counts each PR's refusal cycle, so the stall warning keeps its cadence. A result holding a BEHIND PR is
+  // never replayed: its update must be retried live.
+  const cacheKey = `${repo}\u0000${baseBranch}`;
+  const version = await openPrsVersion(repo).catch(() => null);
+  const last = reads.sweeps.get(cacheKey);
+  let prs: { number: number; headRefName: string; isDraft: boolean; mergeStateStatus: string }[] | undefined;
+  if (last && version !== null) {
+    const baseMoved = sweepGate ? await sweepGate(repo, [baseBranch]).catch(() => true) : true;
+    if (!baseMoved && last.key === version && Date.now() - last.at < SWEEP_REUSE_MS) prs = last.prs;
+  }
+  const replayed = prs !== undefined;
+  if (prs === undefined) {
+    const out = await ghAsync(["pr", "list", "--repo", repo, "--state", "open", "--base", baseBranch, "--json", "number,headRefName,isDraft,mergeStateStatus", "--limit", "100"], cwd);
+    prs = JSON.parse(out || "[]");
+  }
   const syncHeads = new Set([syncBranchName(productionBranch, baseBranch), productionBranch]);
   const updated: number[] = [];
   const seen = new Set<string>();
-  for (const pr of prs) {
+  const open = prs ?? [];
+  for (const pr of open) {
     seen.add(`${repo}#${pr.number}`);
     if (pr.isDraft || syncHeads.has(pr.headRefName)) continue;
     const state = pr.mergeStateStatus;
@@ -421,6 +448,10 @@ export async function sweepOpenPrStates(repo: string, baseBranch: string, produc
   }
   // A PR no longer open (merged or closed) forgets its history.
   for (const key of [...refusals.keys()]) if (key.startsWith(`${repo}#`) && !seen.has(key)) refusals.delete(key);
+  // The update-branch writes above cleared this repo's sweeps; a result is stored only when it wrote nothing and nothing is BEHIND.
+  if (!replayed && version !== null && updated.length === 0 && !open.some((p) => p.mergeStateStatus === "BEHIND")) {
+    reads.sweeps.set(cacheKey, { key: version, at: Date.now(), prs: open });
+  }
   return updated;
 }
 

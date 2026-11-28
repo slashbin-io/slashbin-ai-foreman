@@ -89,6 +89,21 @@ async function readPr(prViews: PrViews, repo: string, pr: number, cwd: string): 
   return view;
 }
 
+/** Fill `prViews` for every wanted PR that one merged-PR listing holds. Never throws. */
+export async function prefetchMerged(prViews: PrViews, wanted: ReadonlySet<number>, repo: string, base: string, cwd: string): Promise<void> {
+  try {
+    const listed = JSON.parse((await ghAsync(["pr", "list", "--repo", repo, "--state", "merged", "--base", base,
+      "--json", "number,state,title,body,headRefName,commits", "--limit", "100"], cwd)) || "[]") as (Partial<PrView> & { number: number })[];
+    for (const v of listed) {
+      if (!wanted.has(v.number) || v.state !== "MERGED") continue;
+      prViews.set(`${repo}#${v.number}`, {
+        state: v.state, title: v.title ?? "", body: v.body ?? "", headRefName: v.headRefName ?? "",
+        commits: Array.isArray(v.commits) ? v.commits : [],
+      });
+    }
+  } catch { /* each merge is read on its own below */ }
+}
+
 /**
  * The PRs merged into the base branch that production lacks, each with the
  * issues it implements. Null when GitHub could not be read: the release then
@@ -110,6 +125,14 @@ export async function listCarriedMerges(repoConfig: RepoConfig, logger: Logger, 
     const prefixes = repoConfig.github.dependencyBranchPrefixes;
     const seen = new Set<number>();
     const merges: CarriedMerge[] = [];
+    // One `pr list --state merged` answers every merge it holds, where a `pr view` each cost a GraphQL call per
+    // merge per pass (601 an hour, 2026-11-28). A merge the list lacks (past its window, or not a PR) is still
+    // read, and judged, by its own `pr view` below; a failed list changes nothing.
+    const candidates = new Set<number>();
+    for (const line of out.split("\n")) {
+      try { const n = mergedPrNumber(String((JSON.parse(line) as { headline?: unknown }).headline ?? "")); if (n !== null) candidates.add(n); } catch { /* the loop below skips it */ }
+    }
+    if (candidates.size >= 2) await prefetchMerged(prViews, candidates, repo, baseBranch, cwd);
     for (const line of out.split("\n")) {
       if (!line.trim()) continue;
       const c = JSON.parse(line) as { sha?: unknown; headline?: unknown };
