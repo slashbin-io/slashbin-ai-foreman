@@ -97,6 +97,9 @@ const repoEntrySchema = z.object({
   // The skills this repo's copy follows when skillSync is on, in place of
   // skillSync.skills. [] opts the repo out of skill sync.
   skillSyncSkills: z.array(z.string()).optional(),
+  // Golden skills a human-lane delivery removes from this repo (the Foreman-only skills, once no
+  // Foreman builder serves it). A skill this repo also selects is never removed.
+  skillSyncRemove: z.array(z.string()).optional(),
   // A human-lane repo (registry lane `human`): the Foreman does not implement, review, revise,
   // release or label anything there. It only delivers the golden skills, per `approved-for-human`
   // issue, as a `feature/<N>-<slug>` branch the person's direct-mode session resumes. Needs skillSync.
@@ -603,6 +606,8 @@ export interface RepoConfig {
   otel: OtelConfig;
   /** This repo's own skill-sync list; undefined follows skillSync.skills, [] opts out. */
   skillSyncSkills?: readonly string[];
+  /** Golden skills a human-lane delivery removes from this repo. */
+  skillSyncRemove?: readonly string[];
   /** Sync-only (human lane): only the `skill-deliver` stage runs here; see the repo schema. */
   syncOnly?: boolean;
   /** The fleet-wide lifecycle labels — the global value, never a per-repo one. */
@@ -1011,6 +1016,7 @@ export function loadConfig(configPath?: string): AgentConfig {
         reviewerLogin: entry.reviewerLogin ?? parsed.reviewerLogin,
         dependencyPreApproved: entry.dependencyPreApproved ?? false,
         ...(entry.skillSyncSkills ? { skillSyncSkills: Object.freeze([...entry.skillSyncSkills]) } : {}),
+        ...(entry.skillSyncRemove ? { skillSyncRemove: Object.freeze([...entry.skillSyncRemove]) } : {}),
         ...(entry.syncOnly ? { syncOnly: true } : {}),
         ...globals,
       };

@@ -487,6 +487,7 @@ Each entry is one repo. Besides the keys marked *Per repo* above, an entry takes
 - `name`: The repo's short name: in logs, state, notifications and `--repo <name>`.
 - `dependencyPreApproved`: Owner standing authorization: file this repo's dependency batch issue already carrying the trigger label and the production grant label (`prodGrantLabel`). Opt-in per repo, default OFF. A repo without it files the batch unapproved, and nothing builds until a person approves it.
 - `skillSyncSkills`: The skills this repo's copy follows when skillSync is on, in place of skillSync.skills. [] opts the repo out of skill sync.
+- `skillSyncRemove`: Golden skills a human-lane delivery removes from this repo (the Foreman-only skills, once no Foreman builder serves it). A skill this repo also selects is never removed.
 - `syncOnly`: A human-lane repo (registry lane `human`): the Foreman does not implement, review, revise, release or label anything there. It only delivers the golden skills, per `approved-for-human` issue, as a `feature/<N>-<slug>` branch the person's direct-mode session resumes. Needs skillSync.
 
 ```json

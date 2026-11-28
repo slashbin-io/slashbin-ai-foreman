@@ -292,6 +292,22 @@ export async function repoSkillsAt(repoPath: string, ref: string, targetDir: str
   return out;
 }
 
+/**
+ * The skills of `remove` still committed at `ref`: only golden skill names, never one this repo also selects, so a
+ * person's own skill directory is never taken out.
+ */
+async function removableAt(
+  cwd: string, ref: string, targetDir: string, golden: Golden, names: readonly string[], remove: readonly string[] | undefined,
+): Promise<string[]> {
+  const target = targetDir.replace(/\/+$/, "");
+  const out: string[] = [];
+  for (const skill of remove ?? []) {
+    if (names.includes(skill) || !golden.skills.has(skill)) continue;
+    if ((await lsTree(cwd, ref, `${target}/${skill}`)).length > 0) out.push(skill);
+  }
+  return out;
+}
+
 /** A repo's drift at `ref` (default: the feature branch as last fetched — what the session's Phase 0 pulls). */
 export async function driftAt(repoPath: string, ref: string, cfg: SkillSyncConfig, golden: Golden, names: readonly string[]): Promise<SkillDrift[]> {
   return compareSkills(golden, names, await repoSkillsAt(repoPath, ref, cfg.targetDir, names));
@@ -308,6 +324,8 @@ export interface SkillSyncRepo {
   /** The branch the sync commit is made on (the repo's baseBranch); sessions cut their issue branch from it. */
   baseBranch: string;
   skillSyncSkills?: readonly string[];
+  /** Golden skills a human-lane delivery takes out of this repo: no builder here reads them any more. */
+  skillSyncRemove?: readonly string[];
 }
 
 // --- The sync ---
@@ -586,20 +604,21 @@ export class SkillSync {
       const baseSha = await git(["rev-parse", `origin/${fb}`], cwd);
       const have = await repoSkillsAt(cwd, baseSha, target, names);
       const stale = compareSkills(golden, names, have).filter((d) => d.state !== "current").map((d) => d.skill);
-      if (stale.length === 0) return { status: "current" };
+      const removed = await removableAt(cwd, baseSha, target, golden, names, repo.skillSyncRemove);
+      if (stale.length === 0 && removed.length === 0) return { status: "current" };
 
       const existing = await git(["ls-remote", "--heads", "origin", `feature/${issue.number}-*`], cwd);
       if (existing) {
         const rows = existing.split("\n").map((l) => l.split("\t"));
         const branch = rows[0][1]?.replace(/^refs\/heads\//, "") ?? `feature/${issue.number}-*`;
         if (rows.length === 1 && prsForBranch) {
-          const refreshed = await this.refreshUntouched({ cfg, cwd, golden, names, target, baseSha, stale, have, issue, branch, oldSha: rows[0][0], prsForBranch, logger });
+          const refreshed = await this.refreshUntouched({ cfg, cwd, golden, names, target, baseSha, stale, removed, have, issue, branch, oldSha: rows[0][0], prsForBranch, remove: repo.skillSyncRemove, logger });
           if (refreshed) return refreshed;
         }
         return { status: "exists", branch };
       }
 
-      const built = await this.buildDeliveryCommit(cwd, golden, target, baseSha, stale, have, issue.number);
+      const built = await this.buildDeliveryCommit(cwd, golden, target, baseSha, stale, have, issue.number, removed);
       scratch = built.scratch;
       const { sha, subject } = built;
       const branch = `feature/${issue.number}-${slugify(issue.title) || "issue"}`;
@@ -619,7 +638,7 @@ export class SkillSync {
   /** One `chore(skills): sync` commit on `baseSha`, built with plumbing in a throwaway index. The caller removes `scratch`. */
   private async buildDeliveryCommit(
     cwd: string, golden: Golden, target: string, baseSha: string, stale: string[],
-    have: Map<string, Map<string, Buffer>>, issueNumber: number,
+    have: Map<string, Map<string, Buffer>>, issueNumber: number, removed: readonly string[] = [],
   ): Promise<{ sha: string; subject: string; scratch: string }> {
     const scratch = mkdtempSync(join(tmpdir(), "foreman-skill-deliver-"));
     try {
@@ -635,10 +654,15 @@ export class SkillSync {
           await gi(["update-index", "--add", "--cacheinfo", `100644,${oid},${base}/${p}`]);
         }
       }
+      for (const skill of removed) {
+        for (const e of await lsTree(cwd, baseSha, `${target}/${skill}`)) await gi(["update-index", "--force-remove", "--", e.path]);
+      }
       const tree = await gi(["write-tree"]);
-      const subject = `chore(skills): sync ${stale.join(", ")} from ${golden.label}@${golden.version} (#${issueNumber})`;
+      // A removal is named with a leading "-", so the subject still reads `sync <skills> from <golden>`.
+      const subject = `chore(skills): sync ${[...stale, ...removed.map((r) => `-${r}`)].join(", ")} from ${golden.label}@${golden.version} (#${issueNumber})`;
       const body =
-        stale.map((s) => `${target}/${s} <- ${golden.label}:${golden.origin.get(s)} @ ${golden.version}`).join("\n") +
+        [...stale.map((s) => `${target}/${s} <- ${golden.label}:${golden.origin.get(s)} @ ${golden.version}`),
+          ...removed.map((r) => `${target}/${r} removed: no builder of this repo reads it`)].join("\n") +
         `\n\n${DELIVERY_MARKER}\n` +
         "so the direct-mode session starts on the current skills. Do not hand-edit this copy:\n" +
         "change the golden source, and the next issue here brings it over.\n\n" +
@@ -664,6 +688,7 @@ export class SkillSync {
    */
   private async refreshUntouched(a: {
     cfg: SkillSyncConfig; cwd: string; golden: Golden; names: string[]; target: string; baseSha: string; stale: string[];
+    removed: string[]; remove?: readonly string[];
     have: Map<string, Map<string, Buffer>>; issue: { number: number; title: string }; branch: string; oldSha: string;
     prsForBranch: (branch: string) => Promise<{ number: number; state: string }[]>; logger: Logger;
   }): Promise<DeliverOutcome | null> {
@@ -678,7 +703,9 @@ export class SkillSync {
       if (commits.length === 0) return null;
       const me = (await git(["var", "GIT_AUTHOR_IDENT"], cwd)).replace(/ \d+ [+-]\d{4}$/, "");
       const subjectRe = new RegExp(`^chore\\(skills\\): sync .+ \\(#${issue.number}\\)$`);
-      const selectedDirs = a.names.map((n) => `${a.target}/${n}/`);
+      // A skill now listed for removal was selected when an earlier delivery wrote it: it is still the Foreman's.
+      const dropped = (a.remove ?? []).filter((n) => !a.names.includes(n));
+      const selectedDirs = [...a.names, ...dropped].map((n) => `${a.target}/${n}/`);
       const versionRe = new RegExp(`^chore\\(skills\\): sync .+ from .+@([0-9a-f]{7,40}) \\(#${issue.number}\\)$`);
       for (const [sha, parents, author, subject, tree, body] of commits) {
         if (parents.trim().split(/\s+/).length !== 1) return null; // a merge: the person brought the base in
@@ -713,7 +740,11 @@ export class SkillSync {
         // a current one already was. So each such skill's tree in the commit must be the golden's, file set and bytes.
         // A file a person put back (restoring what the delivery deleted, even when that undoes the skill's whole diff),
         // or an edited byte, breaks that and the branch is left alone.
-        for (const name of a.names) {
+        // A dropped skill is checked when the diff touches it or the subject names it as synced: a person who restores
+        // what the delivery deleted can erase the skill's whole diff, but not the subject that says it was delivered.
+        const synced = new Set((/^chore\(skills\): sync (.+) from /.exec(subject)?.[1] ?? "").split(",").map((n) => n.trim()));
+        const touched = (n: string) => synced.has(n) || changes.some(([, path]) => path.startsWith(`${a.target}/${n}/`));
+        for (const name of [...a.names, ...dropped.filter(touched)]) {
           const files = then.skills.get(name);
           if (!files) continue; // not in the golden then: the diff check above proved the delivery left it alone
           const entries = await lsTree(cwd, sha, `${a.target}/${name}`);
@@ -725,10 +756,11 @@ export class SkillSync {
         }
       }
       const carried = compareSkills(a.golden, a.names, await repoSkillsAt(cwd, tip, a.target, a.names)).filter((d) => d.state !== "current");
-      if (carried.length === 0) return null; // the branch already carries the golden
+      const lingering = await removableAt(cwd, tip, a.target, a.golden, a.names, a.remove);
+      if (carried.length === 0 && lingering.length === 0) return null; // the branch already carries the golden
       const prs = await a.prsForBranch(branch);
       if (prs.length > 0) return null;
-      const built = await this.buildDeliveryCommit(cwd, a.golden, a.target, a.baseSha, a.stale, a.have, issue.number);
+      const built = await this.buildDeliveryCommit(cwd, a.golden, a.target, a.baseSha, a.stale, a.have, issue.number, a.removed);
       scratch = built.scratch;
       await git(["push", "--quiet", `--force-with-lease=refs/heads/${branch}:${oldSha}`, "origin", `${built.sha}:refs/heads/${branch}`], cwd);
       logger.info(`Skill delivery: ${built.subject} — refreshed ${branch} ${oldSha.slice(0, 9)} -> ${built.sha.slice(0, 9)} (only Foreman delivery commits, no PR)`);

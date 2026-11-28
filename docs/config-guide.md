@@ -112,7 +112,7 @@ override any of: `triggerLabel`, `baseBranch`, `featureBranch`, `productionBranc
 `branchPrefix`, `skillPath`, `revisionSkillPath`, `skillOverlayPath`,
 `revisionSkillOverlayPath`, `prompt`, `model`, `maxTurns`, `maxDurationMs`. A repo entry
 also takes keys that have no top-level value: `reviewEnabled`, `reviewerLogin`,
-`dependencyPreApproved`, `skillSyncSkills` and `syncOnly` (every per-repo key:
+`dependencyPreApproved`, `skillSyncSkills`, `skillSyncRemove` and `syncOnly` (every per-repo key:
 [configuration.md](configuration.md#per-repo-entries-repos)). The
 reference marks which fields fall back to a top-level value; other fields apply
 only to the entry that sets them.

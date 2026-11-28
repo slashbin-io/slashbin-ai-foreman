@@ -117,7 +117,7 @@ Global `skillSync` block. It is off unless `enabled` is set.
 | `label` | the checkout's dir name | The source name used in the commit subject. |
 | `refreshMs` | `300000` | How long one read of the golden is reused. |
 
-Per repo, `skillSyncSkills` replaces `skills`, and `[]` opts that repo out. Per repo, `syncOnly: true` makes it a human-lane repo (above).
+Per repo, `skillSyncSkills` replaces `skills`, and `[]` opts that repo out. Per repo, `syncOnly: true` makes it a human-lane repo (above). Per repo, `skillSyncRemove` names golden skills a human-lane delivery takes out of the repo: when a repo stops being served by a Foreman builder, the next `approved-for-human` delivery removes the Foreman-only skills in the same commit (subject names each with a leading `-`). Only golden skill names the repo does not also select are ever removed, so a person's own skill directory is never touched.
 
 Example: a git source that serves the Foreman-lane and shared skills.
 
