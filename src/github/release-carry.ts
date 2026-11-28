@@ -97,8 +97,7 @@ async function readPr(prViews: PrViews, repo: string, pr: number, cwd: string): 
 export async function listCarriedMerges(repoConfig: RepoConfig, logger: Logger, unresolved?: number[]): Promise<CarriedMerge[] | null> {
   const { githubRepo: repo, productionBranch, baseBranch, repoPath: cwd } = repoConfig;
   const prViews: PrViews = new Map();
-  // Only the plain listing is reused: a caller collecting `unresolved` must see every read fail or succeed now.
-  const reusable = carryGate !== null && unresolved === undefined;
+  const reusable = carryGate !== null;
   const last = lastListing.get(repo);
   if (reusable && last && !(await carryGate!(repo).catch(() => true))) return last;
   let complete = true;

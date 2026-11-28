@@ -5,6 +5,7 @@ import type { Logger } from "../logger.js";
 import { fleetState } from "../github-state.js";
 import { ghAsync } from "./gh.js";
 import { isForemanFeatureHead } from "../foreman-branch.js";
+import { clearReadMemo } from "../read-memo.js";
 import type { IssueSnapshot, PrSnapshot, GhFailure } from "../code-host.js";
 export type { IssueSnapshot, PrSnapshot, GhFailure } from "../code-host.js";
 
@@ -86,11 +87,34 @@ export function configureIssueCache(opts: { ttlMs?: number; snapshotLimit?: numb
 }
 
 /**
+ * Whether a gh invocation only reads. `gh api` is a read unless it names a non-GET method (`-X`, `--method`),
+ * sends fields without a method (gh then POSTs), or posts a GraphQL mutation. Anything else outside the list/view
+ * family is treated as a write: a wrong "write" only costs one extra read.
+ */
+export function isGhRead(args: string[]): boolean {
+  if (args[0] !== "api") return ["list", "view", "diff", "checks", "status"].includes(args[1]);
+  let method: string | undefined;
+  let fields = false;
+  for (let i = 1; i < args.length; i++) {
+    const a = args[i];
+    if (a === "-X" || a === "--method") method = args[i + 1];
+    else if (a.startsWith("-X") && a.length > 2) method = a.slice(2);
+    else if (a.startsWith("--method=")) method = a.slice(9);
+    else if (["-f", "-F", "--field", "--raw-field", "--input"].includes(a)) fields = true;
+  }
+  if (method !== undefined) return method.toUpperCase() === "GET";
+  if (args[1] === "graphql") return !args.some((a) => /\bmutation\b/.test(a));
+  return !fields;
+}
+
+/**
  * Drop a repo's cached snapshot when a command mutates issue state, so a later
  * phase re-reads what this cycle just wrote. Keyed off the `--repo` argument;
  * `list`/`view` are reads and left alone.
  */
 export function invalidateSnapshotIfMutating(args: string[]): void {
+  // The short read memo (src/read-memo.ts) never outlives a write; reads leave it alone.
+  if (!isGhRead(args)) clearReadMemo();
   const repoIdx = args.indexOf("--repo");
   const repo = repoIdx >= 0 ? args[repoIdx + 1] : undefined;
 
@@ -331,6 +355,15 @@ export async function knownNoOpenPr(repo: string, head: string, base: string): P
   const prs = await fleetState.openPrs(repo);
   if (prs.length >= STATE_PR_PAGE) return false;
   return !prs.some((p) => p.headRefName === head && p.baseRefName === base);
+}
+
+/**
+ * True when the fleet state AUTHORITATIVELY says the repo has no open PR at all (same bar as `knownNoOpenPr`).
+ * False is "ask GitHub". Lets a per-PR sweep skip the many repos with nothing to sweep.
+ */
+export async function knownNoOpenPrs(repo: string): Promise<boolean> {
+  if (reads.ttlMs <= 0 || !fleetState.isEnabled(repo)) return false;
+  return (await fleetState.openPrs(repo)).length === 0;
 }
 
 /** The fleet state reads this many open PRs per repo; a view that full may be missing some. */
