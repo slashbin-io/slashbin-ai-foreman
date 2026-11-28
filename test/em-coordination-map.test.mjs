@@ -53,3 +53,10 @@ test("the visual QA hold the map hands to the EM is still the EM-decides path", 
 test("the unstick give-up count in the map matches the source", () => {
   assert.ok(map.includes(`After ${UNSTICK_MAX_ATTEMPTS} failed calls`), `map must say "After ${UNSTICK_MAX_ATTEMPTS} failed calls"`);
 });
+
+test("the map carries the `awaiting evidence` expiry row, on the hold's own max-age knob", async () => {
+  const { AWAITING_EVIDENCE_LABEL } = await import("../dist/phases/evidence-expiry.js");
+  assert.ok(map.includes(`\`${AWAITING_EVIDENCE_LABEL}\``));
+  assert.ok(map.includes("`awaitingEvidence`"));
+  assert.match(map, /same maximum age as a hold\*\* \(`backoff.holdMaxAgeMs`/);
+});

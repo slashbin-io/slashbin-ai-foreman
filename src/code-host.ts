@@ -485,6 +485,13 @@ export interface CodeHost {
   // CI checks; issue comments.
   bounceForRedCI(config: RepoConfig, prNumber: number, verdict: CheckVerdict): Promise<void>;
   commentOnIssue(config: RepoConfig, issueNumber: number, body: string): Promise<void>;
+  /** The newest timeline event on an issue (ms); null when it has none. Throws on a failed read. */
+  lastIssueActivity(config: RepoConfig, issueNumber: number): Promise<number | null>;
+  /** Comment, close as completed when `close`, then remove `label`; false on any failure. Never throws. */
+  mergedPromotionsMentioning(config: RepoConfig, num: number): Promise<{
+    body: string;
+}[]>;
+  retireLabelledIssue(config: RepoConfig, issueNumber: number, label: string, comment: string, close: boolean): Promise<boolean>;
   countCiBouncesSinceReview(config: RepoConfig, prNumber: number, reviewerLogin: string | undefined, logger: Logger): Promise<number>;
   getPRCheckVerdict(config: RepoConfig, prNumber: number, logger: Logger): Promise<CheckVerdict>;
 

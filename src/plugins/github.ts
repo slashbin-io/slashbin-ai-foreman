@@ -8,6 +8,7 @@ import * as ciGate from "../github/ci-gate.js";
 import * as deadBlocker from "../github/dead-blocker.js";
 import * as dependencies from "../github/dependencies.js";
 import * as discovery from "../github/discovery.js";
+import * as evidence from "../github/evidence.js";
 import * as lifecycleScan from "../github/lifecycle-scan.js";
 import * as prComments from "../github/pr-comments.js";
 import * as prBody from "../github/pr-body.js";
@@ -98,6 +99,9 @@ export function githubCodeHost(
     openIssueLabels: cache.openIssueLabels,
     bounceForRedCI: ciGate.bounceForRedCI,
     commentOnIssue: ciGate.commentOnIssue,
+    lastIssueActivity: evidence.lastIssueActivity,
+    mergedPromotionsMentioning: evidence.mergedPromotionsMentioning,
+    retireLabelledIssue: evidence.retireLabelledIssue,
     countCiBouncesSinceReview: ciGate.countCiBouncesSinceReview,
     getPRCheckVerdict: ciGate.getPRCheckVerdict,
     announceDeadBlocker: deadBlocker.announceDeadBlocker,
