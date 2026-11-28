@@ -222,12 +222,10 @@ export function unlinkedFixPremise(holder: number, held: number | null | undefin
  */
 export async function fixesForHold(
   rt: ForemanRuntime, repoConfig: RepoConfig, holder: number, verifying: number | null, candidates: readonly number[], logger: Logger,
-  /** The candidates' relations when the caller already read them (several holders, one read each). */
-  known?: ReadonlyMap<number, Relation>,
 ): Promise<number[]> {
   let relations;
   try {
-    relations = known ?? await codeHost().relationsOf(repoConfig, candidates, logger);
+    relations = await codeHost().relationsOf(repoConfig, candidates, logger);
   } catch (err) {
     logger.warn(`#${holder}: its corrections could not be read (${(err instanceof Error ? err.message : String(err)).split("\n")[0]}) — building in queue order`);
     return [];
@@ -259,8 +257,8 @@ export async function fixesForHold(
 /**
  * The release-hold build-first check (slashbin-ai-foreman#448): the open release PR is held while an issue it lists is
  * unsigned (`unsignedIssues`, the sign-off gate), and that issue's sign-off waits on its corrective. Each unsigned
- * issue is a holder for `fixesForHold`, the same relation and the same rule as a dev-verification hold: a linked
- * corrective builds ahead of the severity queue, a body mention does not. No release PR, nothing unsigned, or an
+ * issue is a holder, and the code host's relation decides as for a dev-verification hold (`correctionsToBuild`'s rule,
+ * read once for all holders): a linked corrective builds ahead of the severity queue, a body mention does not. No release PR, nothing unsigned, or an
  * unreadable fact answers [] and the queue builds in order. The unlinked-fix question is not asked here: it belongs to
  * a verification hold (`verifying` is null). Exported for tests.
  */
@@ -288,11 +286,9 @@ export async function releaseHeldFixes(
     logger.warn(`The release hold's corrections could not be read (${(err instanceof Error ? err.message : String(err)).split("\n")[0]}) — building in queue order`);
     return [];
   }
-  const fixes = new Set<number>();
-  for (const holder of unsigned) {
-    for (const n of await fixesForHold(rt, repoConfig, holder, null, candidates.filter((c) => c !== holder), logger, relations)) fixes.add(n);
-  }
-  return [...fixes];
+  // The candidates that correct any holder: O(holders + candidates + relation edges), not a pass per holder.
+  const holders = new Set(unsigned);
+  return [...new Set(candidates)].filter((n) => relations.get(n)?.corrects.some((h) => h !== n && holders.has(h)));
 }
 
 /**
