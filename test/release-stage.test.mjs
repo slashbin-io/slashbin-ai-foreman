@@ -92,6 +92,8 @@ if (a[0] === "pr") {
     let l = Object.values(st.prs).filter((p) => want === null || p.state === want);
     if (flag("--base")) l = l.filter((p) => p.baseRefName === flag("--base"));
     if (flag("--head")) l = l.filter((p) => p.headRefName === flag("--head"));
+    // A PR the fake cannot read by number is not served by the batched merged listing either.
+    if (flag("--state") === "merged") l = l.filter((p) => !(st.unreadable || []).includes(p.number));
     const since = /^merged:>=(.+)$/.exec(flag("--search") || "");
     if (since) l = l.filter((p) => p.mergedAt && p.mergedAt.slice(0, 19) >= since[1]);
     out(l.sort((x, y) => y.number - x.number).slice(0, Number(flag("--limit") || 100)));

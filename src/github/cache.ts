@@ -68,6 +68,8 @@ class ReadCache {
    * cycle re-read the reviews of every open feature PR waiting on a human.
    */
   readonly freshReviews = new Map<string, { key: string; fresh: boolean }>();
+  /** `sweepOpenPrStates` results per repo and base branch, replayed while nothing they depend on moved. Cleared by any write to the repo. */
+  readonly sweeps = new Map<string, { key: string; at: number; prs: { number: number; headRefName: string; isDraft: boolean; mergeStateStatus: string }[] }>();
 }
 export const reads = new ReadCache();
 
@@ -121,10 +123,11 @@ export function invalidateSnapshotIfMutating(args: string[]): void {
   // `gh api --method POST/PATCH/PUT/DELETE` can label, merge, or retarget
   // anything, and the URL shape varies too much to attribute reliably. Clear
   // everything — conservative, and a cache miss only costs one request.
-  const methodIdx = args.indexOf("--method");
-  if (args[0] === "api" && methodIdx >= 0 && args[methodIdx + 1] !== "GET") {
+  const methodIdx = args.findIndex((a) => a === "--method" || a === "-X");
+  if (args[0] === "api" && methodIdx >= 0 && args[methodIdx + 1]?.toUpperCase() !== "GET") {
     reads.issues.clear();
     reads.prs.clear();
+    reads.sweeps.clear();
     const m = /^repos\/([^/]+\/[^/]+)\//.exec(args.find((a) => a.startsWith("repos/")) ?? "");
     if (m) fleetState.markRepoDirty(m[1]);
     else fleetState.markAllDirty();
@@ -138,6 +141,7 @@ export function invalidateSnapshotIfMutating(args: string[]): void {
   if (READ_ONLY.has(args[1])) return;
 
   fleetState.markRepoDirty(repo);
+  dropSweeps(repo);
   if (args[0] === "issue") reads.issues.delete(repo);
   // A PR merge closes the PR *and* moves the issue labels that track it, so a
   // `pr` mutation has to drop both — otherwise a later phase this cycle reads a
@@ -240,7 +244,13 @@ export function hasLabel(issue: IssueSnapshot, name: string): boolean {
 export function forgetOpenPrs(repo: string): void {
   reads.prs.delete(repo);
   reads.issues.delete(repo);
+  dropSweeps(repo);
   fleetState.markRepoDirty(repo);
+}
+
+/** Forget a repo's replayable sweep results (every base branch). */
+export function dropSweeps(repo: string): void {
+  for (const k of [...reads.sweeps.keys()]) if (k.startsWith(`${repo}\u0000`)) reads.sweeps.delete(k);
 }
 
 /** Every open PR in the repo, from cache when warm. */
@@ -391,6 +401,14 @@ export async function openPrVersion(repo: string, head: string, base: string): P
   if (reads.ttlMs <= 0 || !fleetState.isEnabled(repo)) return null;
   const pr = (await fleetState.openPrs(repo)).find((p) => p.headRefName === head && p.baseRefName === base);
   return pr ? `${pr.number}:${pr.headRefOid}@${pr.updatedAt}` : null;
+}
+
+/** Every open PR's number, head commit and last update, or null when the state cannot vouch (off, or the list may be cut short). */
+export async function openPrsVersion(repo: string): Promise<string | null> {
+  if (reads.ttlMs <= 0 || !fleetState.isEnabled(repo)) return null;
+  const prs = await fleetState.openPrs(repo);
+  if (prs.length >= STATE_PR_PAGE) return null;
+  return prs.map((p) => `${p.number}:${p.headRefOid}@${p.updatedAt}`).join(",");
 }
 
 /** Changes whenever a PR in the repo was seen merged or closed, or null when the state is off. */

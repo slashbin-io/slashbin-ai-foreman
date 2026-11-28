@@ -53,9 +53,10 @@ export function githubCodeHost(
   return {
     configureIssueCache: cache.configureIssueCache,
     // The fleet state reads with the Foreman token from the daemon's cwd, as before.
-    configureState: ({ carryGate, driftGate, ...opts }) => {
+    configureState: ({ carryGate, driftGate, sweepGate, ...opts }) => {
       releaseCarry.configureCarryGate(carryGate ?? null);
       branch.configureDriftGate(driftGate ?? null);
+      branch.configureSweepGate(sweepGate ?? null);
       if (opts.persistPath) setRecordCachePath(join(dirname(opts.persistPath), ".github-records.json"));
       fleetState.configure({ ...opts, runAsync: (args) => ghAsync(args, process.cwd()) });
     },
