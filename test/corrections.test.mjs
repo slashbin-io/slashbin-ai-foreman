@@ -310,3 +310,120 @@ test("ratchet: a core file that reintroduces a title parse fails; plugin code an
     "phases/verify.ts": "// the title says follow-up to #N\n/* follow-up to #N */\nconst slug = title.toLowerCase();",
   }), []);
 });
+
+// ---------------------------------------------------------------------------
+// A release hold (slashbin-ai-foreman#448): the open release PR waits on an unsigned issue, and that issue's
+// corrective builds ahead of the severity queue, by the same relation as a verification hold.
+
+import { releaseHeldFixes } from "../dist/phases/implement.js";
+
+/** harness() with the open release PR stubbed: it lists the given issues (null: no release PR is open). */
+function releaseHarness(listed) {
+  const h = harness();
+  const base = githubCodeHost();
+  setCodeHost({
+    ...base,
+    commentOnIssue: async (_cfg, n, body) => { h.comments.push([n, body]); },
+    findOpenPromotionPR: async () => (listed === null ? null : { number: 90, url: "u", body: listed.map((n) => `- #${n}: t`).join("\n"), headSha: "s" }),
+  });
+  return h;
+}
+
+// #10 is the unsigned issue the release lists; #14 is a queued higher-severity card; #11 is #10's linked corrective.
+const BLOCKED_BY_11 = { "blocking_11.json": JSON.stringify([{ number: 10, state: "open", labels: [] }]) };
+
+test("a release holds #10 unsigned and #11 corrects it (blocked-by): #11 builds first, ahead of the queued #14", async () => {
+  const h = releaseHarness([10, 12]);
+  try {
+    await withGh(fakeGh(UNTITLED, BLOCKED_BY_11), async (cfg) => {
+      assert.deepEqual(await releaseHeldFixes(h.rt, cfg, QUEUE, h.logger), [11]);
+    });
+    assert.equal(h.comments.length, 0);
+  } finally {
+    setCodeHost(null);
+  }
+});
+
+test("a release holds #10 unsigned and #11 is not linked to it: nothing jumps, the queue builds in order, and nothing is raised", async () => {
+  const h = releaseHarness([10]);
+  try {
+    await withGh(fakeGh(UNTITLED, { "body_11.txt": "fixes #10" }), async (cfg) => {
+      assert.deepEqual(await releaseHeldFixes(h.rt, cfg, QUEUE, h.logger), []);
+    });
+    assert.equal(h.comments.length, 0);
+    assert.equal(h.docs.size, 0);
+  } finally {
+    setCodeHost(null);
+  }
+});
+
+test("no release hold, the severity order is unchanged: no open release PR, or one whose unlinked issue is not what the fix corrects", async () => {
+  for (const listed of [null, [14, 15]]) {
+    const h = releaseHarness(listed);
+    try {
+      await withGh(fakeGh(UNTITLED, BLOCKED_BY_11), async (cfg) => {
+        assert.deepEqual(await releaseHeldFixes(h.rt, cfg, QUEUE, h.logger), [], `release lists ${JSON.stringify(listed)}`);
+      });
+    } finally {
+      setCodeHost(null);
+    }
+  }
+});
+
+test("an unreadable relation or release leaves the queue in order, never a guess", async () => {
+  const h = releaseHarness([10]);
+  try {
+    await withGh(fakeGh(UNTITLED, BLOCKED_BY_11, { fail: true }), async (cfg) => {
+      assert.deepEqual(await releaseHeldFixes(h.rt, cfg, QUEUE, h.logger), []);
+    });
+  } finally {
+    setCodeHost(null);
+  }
+});
+
+test("the build picker asks the release hold with the verification hold's fixes, and never while a feature PR is open", async () => {
+  const { orchestratorSource } = await import("./source-text.mjs");
+  const src = orchestratorSource();
+  assert.match(src, /const releaseFixes = featurePr \? \[\] : await releaseHeldFixes\(rt, repoConfig, everyCandidate, repoLogger\)/);
+  assert.match(src, /\[\.\.\.new Set\(\[\.\.\.verifyFixes, \.\.\.releaseFixes\]\)\]/);
+});
+
+test("the release hold reads each candidate's relations once, however many issues the release holds unsigned", async () => {
+  const h = releaseHarness([10, 11, 12, 13, 14, 15]);
+  try {
+    const dir = fakeGh(UNTITLED, {});
+    await withGh(dir, async (cfg) => {
+      await releaseHeldFixes(h.rt, cfg, QUEUE, h.logger);
+    });
+    const reads = readFileSync(join(dir, "calls"), "utf8").split("\n").filter((l) => /\/dependencies\/blocking|\/parent/.test(l));
+    assert.equal(reads.length, QUEUE.length * 2, "one blocking read and one parent read per candidate, not per holder");
+  } finally {
+    setCodeHost(null);
+  }
+});
+
+test("the release hold's selection is linear: H=C=16 with no corrective edges costs one lookup per candidate, not per holder and candidate", async () => {
+  const holders = Array.from({ length: 16 }, (_, i) => 100 + i);
+  const cands = Array.from({ length: 16 }, (_, i) => 200 + i);
+  let lookups = 0;
+  let edgeVisits = 0;
+  const relations = new Map(cands.map((n) => [n, { mentions: [], get corrects() { edgeVisits++; return []; } }]));
+  const counting = { get: (n) => { lookups++; return relations.get(n); } };
+  const h = harness();
+  setCodeHost({
+    ...githubCodeHost(),
+    findOpenPromotionPR: async () => ({ number: 90, url: "u", body: holders.map((n) => `- #${n}: t`).join("\n"), headSha: "s" }),
+    getOpenIssues: async () => holders.map((number) => ({ number, title: "t", labels: [] })),
+    unsignedIssues: async () => holders,
+    relationsOf: async () => counting,
+  });
+  try {
+    await withGh(fakeGh(UNTITLED, {}), async (cfg) => {
+      assert.deepEqual(await releaseHeldFixes(h.rt, cfg, cands, h.logger), []);
+    });
+    assert.equal(lookups, cands.length, "one relation lookup per candidate");
+    assert.equal(edgeVisits, cands.length, "each candidate's edges visited once");
+  } finally {
+    setCodeHost(null);
+  }
+});
