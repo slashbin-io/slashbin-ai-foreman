@@ -108,6 +108,53 @@ export async function followRelease(rt: ForemanRuntime, repoConfig: RepoConfig, 
   await rt.releases.followReleasePrs(repoConfig, logger, async (release) => { await emit(rt, { kind: "release", release }, null, logger); }, owned);
 }
 
+/** Title of the one handoff issue per repo for work merged to the base branch with no Foreman issue. */
+export const DRIFT_HANDOFF_TITLE = "Release the work merged to develop with no Foreman issue";
+
+/**
+ * The base branch carries production files and no issue names them (a person merged directly). File ONE handoff
+ * issue at `pr approved` so the existing path (stall comment, EM verification, release) carries it. Any open issue
+ * with the handoff title, in any state (a `blocked` one included), is the handoff: never a second one.
+ */
+async function fileDriftHandoff(repoConfig: RepoConfig, open: readonly { number: number; title: string }[], files: number, logger: Logger): Promise<void> {
+  const existing = open.find((i) => i.title.startsWith(DRIFT_HANDOFF_TITLE));
+  if (existing) {
+    logger.debug(`Drift handoff #${existing.number} is already open for ${repoConfig.githubRepo}`);
+    return;
+  }
+  const compare = `https://github.com/${repoConfig.githubRepo}/compare/${repoConfig.productionBranch}...${repoConfig.baseBranch}`;
+  const body = [
+    `\`${repoConfig.baseBranch}\` carries ${files} changed file(s) that are not on \`${repoConfig.productionBranch}\`, and no Foreman issue names them.`,
+    "",
+    "This work was merged with no Foreman issue, so no dev verification ran.",
+    "",
+    `Compare: ${compare}`,
+    "",
+    `To release it: verify the outcome, then apply \`${repoConfig.lifecycleLabels.readyForProd}\`. If it should not ship, close this issue. ` +
+    "The Foreman closes it on its own when the branches no longer differ.",
+  ].join("\n");
+  const n = await codeHost().createIssue(repoConfig.githubRepo, repoConfig.repoPath, DRIFT_HANDOFF_TITLE, body, [repoConfig.lifecycleLabels.prApproved], logger);
+  if (n !== null) logger.info(`Filed drift handoff #${n} for ${repoConfig.githubRepo} (${files} file(s) merged with no Foreman issue)`);
+  else logger.warn(`Could not file a drift handoff for ${repoConfig.githubRepo}`);
+}
+
+/** The drift is gone: an open handoff still at `pr approved` (never released, never carried) gets one comment, then closes. */
+async function closeDriftHandoff(rt: ForemanRuntime, repoConfig: RepoConfig, logger: Logger): Promise<void> {
+  const { prApproved, readyForProd, releasePending } = repoConfig.lifecycleLabels;
+  const open = await codeHost().getOpenIssues(repoConfig.githubRepo, repoConfig.repoPath, logger);
+  const h = open.find((i) => i.title.startsWith(DRIFT_HANDOFF_TITLE) && codeHost().hasLabel(i, prApproved) &&
+    !codeHost().hasLabel(i, readyForProd) && !codeHost().hasLabel(i, releasePending));
+  if (!h) return;
+  try {
+    await codeHost().commentOnIssue(repoConfig, h.number,
+      `\`${repoConfig.baseBranch}\` no longer carries production files that are not on \`${repoConfig.productionBranch}\`: nothing is left to release. Closing this handoff.`);
+  } catch (err) {
+    logger.warn(`Drift handoff #${h.number}: could not comment, so not closing it this pass: ${err instanceof Error ? err.message : String(err)}`);
+    return;
+  }
+  if (await advance(rt, itemOf(repoConfig, h.number), "closedNoRelease", repoConfig, logger)) logger.info(`Closed drift handoff #${h.number}: no drift remains`);
+}
+
 /** Marks the promote stage's one stall comment on an issue. */
 const STALL_MARK = "<!-- foreman:promotion-stall -->";
 
@@ -116,8 +163,7 @@ const STALL_MARK = "<!-- foreman:promotion-stall -->";
  * waiting at `pr approved` (dev-verified, awaiting EM verification) gets one
  * comment saying so, once per stall: the EM's action is on the issue, not in
  * a channel. Issues that have left `pr approved` drop out of the dedupe list,
- * so a later stall comments again. With nobody to comment on, the log line is
- * the record.
+ * so a later stall comments again. With nobody to comment on, a handoff issue is filed.
  */
 async function noteStall(rt: ForemanRuntime, repoConfig: RepoConfig, files: number, logger: Logger, held: number[] = []): Promise<void> {
   const { prApproved, readyForProd } = repoConfig.lifecycleLabels;
@@ -131,12 +177,7 @@ async function noteStall(rt: ForemanRuntime, repoConfig: RepoConfig, files: numb
   const noted = new Set(waiting.filter((n) => loaded.records.get(n)?.promotionStallNoted === true));
   const fresh = waiting.filter((n) => loaded.records.has(n) && !noted.has(n));
   // A held release names the work: `noteHeldRelease` already said whose it is.
-  if (waiting.length === 0 && held.length === 0) {
-    logger.warn(
-      `${repoConfig.baseBranch} carries ${files} changed file(s) not on ${repoConfig.productionBranch} and no issue carries ` +
-      `"${readyForProd}" or "${prApproved}": promotion is STALLED and no issue names the work. Nothing was commented.`,
-    );
-  }
+  if (waiting.length === 0 && held.length === 0) await fileDriftHandoff(repoConfig, open, files, logger);
   for (const n of fresh) {
     try {
       await codeHost().commentOnIssue(repoConfig, n, [
@@ -322,6 +363,7 @@ export async function tryPromotion(
         await noteStall(rt, repoConfig, files, promoLogger, held);
         await emit(rt, { kind: "promotionStall", repo: repoConfig.githubRepo, detail }, null, promoLogger);
       } else if (drift) {
+        await closeDriftHandoff(rt, repoConfig, promoLogger);
         if (drift.developAheadFiles > 0) {
           promoLogger.debug(
             `${repoConfig.baseBranch} differs from ${repoConfig.productionBranch} only under .claude/ ` +
