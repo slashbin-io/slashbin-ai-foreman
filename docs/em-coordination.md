@@ -319,7 +319,9 @@ seat), and `stage-pending-verification`, `stage-awaiting-release`, `stage-releas
 (resolver `unstickEscalationOwner`: the outcome gate and the release are the EM's). Each starts on the first pass that
 sees the card at the stage and resolves on the first that sees it elsewhere or closed; the repo record's `stageStalls`
 index finds a closed card's stall. None opens on a card another unresolved stall already covers (its own record, or
-named in a release stall's `affected`). A pass that cannot read the open issues or the stages touches none of them.
+named in a release stall's `affected`). A pass that cannot read the open issues or the stages opens and resolves
+none of them; a stall already open keeps aging, and the sweep still raises it past the bound, since its card was last
+seen waiting. Resolving a stall drops its `stalled` question, and the pass re-reads that card before it delivers anything.
 
 Two phases report to it, and the old tooling-hold clock (`toolingHeld`) is gone. A deferred verifier check (`src/phases/verify.ts`) opens
 `verify-deferred`; an `escalated` one frees the repo for the next issue (the PR is still re-asked, uncharged), and a pass, a charged
