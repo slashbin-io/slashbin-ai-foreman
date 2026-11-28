@@ -14,7 +14,9 @@ import { HandoffNotSaved, unstickKey, type UnstickEntry } from "./unstick.js";
 
 export type StallCause =
   | "verify-deferred" | "verify-handoff-failed" | "corrective-chain-stopped"
-  | "release-sign-off" | "release-blocked-label" | "handoff-gave-up" | "epic-unanswered";
+  | "release-sign-off" | "release-blocked-label" | "handoff-gave-up" | "epic-unanswered"
+  | "stage-approved" | "stage-prod-verify-held" | "stage-awaiting-release"
+  | "stage-releasing" | "stage-pending-verification" | "stage-awaiting-signoff";
 export type StallState = "open" | "escalated" | "resolved";
 
 export interface StallRecord {
@@ -137,10 +139,13 @@ export async function report(rt: ForemanRuntime, repoConfig: RepoConfig, r: Stal
   return result;
 }
 
-/** The clearing event happened: mark the unresolved stall resolved. No entry or already resolved: a no-op. */
-export async function resolve(rt: ForemanRuntime, repoConfig: RepoConfig, issue: number, cause: StallCause, at: string): Promise<void> {
-  if (!stallClockEnabled() || issue < 1) return;
-  await rt.records.updateIssueRecord(repoConfig, issue, (d) => {
+/**
+ * The clearing event happened: mark the unresolved stall resolved. No entry or already resolved: a no-op. Resolves
+ * `false` only when the record could not be read or saved, so the stall still stands.
+ */
+export async function resolve(rt: ForemanRuntime, repoConfig: RepoConfig, issue: number, cause: StallCause, at: string): Promise<boolean> {
+  if (!stallClockEnabled() || issue < 1) return true;
+  return rt.records.updateIssueRecord(repoConfig, issue, (d) => {
     const standing = d.stalls?.[cause];
     if (!standing || standing.state === "resolved") return;
     d.stalls = { ...d.stalls, [cause]: { ...standing, state: "resolved", resolvedAt: at } };

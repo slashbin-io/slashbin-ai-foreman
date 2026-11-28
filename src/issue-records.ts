@@ -348,6 +348,8 @@ export interface RepoRecord {
   epicStalls?: number[];
   /** Issues holding an open `handoff-gave-up` stall: the durable index a restart reads, since a closed issue is no longer listed. Written only by `src/phases/unstick.ts`. */
   handoffStalls?: number[];
+  /** Issues holding an open stage stall (`src/stage-stalls.ts`): the durable index a restart reads, since a closed issue is no longer listed. Written only by `src/phases/unstick.ts`. */
+  stageStalls?: number[];
   /** Notices the EM has taken, by unstick key, with the ISO time it did: a notice is delivered once, and a receipt keeps it from being raised again (EM#2501). Written only by `src/phases/unstick.ts`. */
   receipts?: Record<string, string>;
   /** The base-branch head whose landed commits were last judged (40-char sha): the next landed review starts here. Written only by `src/phases/landed-range.ts`. */
@@ -355,7 +357,7 @@ export interface RepoRecord {
 }
 
 export type RepoField = keyof RepoRecord;
-const REPO_FIELDS: readonly RepoField[] = ["unstick", "divergenceRuled", "cardBlocks", "dependencyBatches", "checkDefects", "epicStalls", "handoffStalls", "receipts", "landedHead"];
+const REPO_FIELDS: readonly RepoField[] = ["unstick", "divergenceRuled", "cardBlocks", "dependencyBatches", "checkDefects", "epicStalls", "handoffStalls", "stageStalls", "receipts", "landedHead"];
 
 /** What `actionableIssues` sorts a set of issues into. */
 export interface Actionable {
