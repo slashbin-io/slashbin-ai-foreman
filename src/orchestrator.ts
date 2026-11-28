@@ -15,6 +15,7 @@ import { runReconcileStage } from "./phases/reconcile.js";
 import { tryRelease } from "./phases/release.js";
 import { tryUnstick } from "./phases/unstick.js";
 import { tryReview } from "./phases/review.js";
+import { codeHost } from "./plugins/registry.js";
 import { tryRevision } from "./phases/revise.js";
 import { tryVerify } from "./phases/verify.js";
 import type { ForemanRuntime } from "./runtime.js";
@@ -325,6 +326,10 @@ async function runStage(
     // --- Review open feature PRs (invokes the configured review skill). The
     //    outcome-label reconcile (reviewLabelReconcile) runs inside tryReview. ---
     case "review":
+      // Every open PR's structural state is read first, whether or not the review will be offered it: a
+      // BEHIND head is updated (strict protection never clears it by waiting) and any other refusal repeated
+      // across cycles warns. Best effort: a failed read never blocks the review.
+      try { await codeHost().sweepOpenPrStates(repoConfig.githubRepo, repoConfig.baseBranch, repoConfig.productionBranch, repoConfig.repoPath, base); } catch { /* the next cycle retries */ }
       if (await tryReview(rt, repoConfig, config, base, cycleNumber, events)) processed++;
       break;
 

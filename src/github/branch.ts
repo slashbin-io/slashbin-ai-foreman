@@ -173,8 +173,36 @@ export async function findOpenSyncPR(
   cwd: string,
   logger?: Logger,
 ): Promise<OpenPromotionPR | null> {
-  const prs: OpenPromotionPR[] = await findOpenPrs(repo, cwd, { base: baseBranch, head: productionBranch, limit: 1 });
-  return prs.length > 0 ? prs[0] : null;
+  // The sync branch first; a PR opened by an older Foreman with the production branch itself as head is still found.
+  for (const head of [syncBranchName(productionBranch, baseBranch), productionBranch]) {
+    const prs: OpenPromotionPR[] = await findOpenPrs(repo, cwd, { base: baseBranch, head, limit: 1 });
+    if (prs.length > 0) return prs[0];
+  }
+  return null;
+}
+
+/**
+ * The branch a sync PR comes from. It is cut from the base and has the production branch merged in, so it
+ * CONTAINS the base: a sync PR whose head was the production branch itself is BEHIND the moment the base
+ * has any commit production lacks, which `strict` branch protection refuses for good, and updating it would
+ * merge the base into production. This branch can be updated safely; production is never written.
+ */
+export function syncBranchName(productionBranch: string, baseBranch: string): string {
+  return `foreman/sync-${productionBranch}-into-${baseBranch}`;
+}
+
+/** Cut the sync branch from the base's tip (moving a leftover one there) and merge production into it. */
+async function prepareSyncBranch(repo: string, productionBranch: string, baseBranch: string, cwd: string): Promise<string> {
+  const branch = syncBranchName(productionBranch, baseBranch);
+  const sha = (await ghAsync(["api", `repos/${repo}/git/ref/heads/${baseBranch}`, "--jq", ".object.sha"], cwd)).trim();
+  try {
+    await ghAsync(["api", "-X", "POST", `repos/${repo}/git/refs`, "-f", `ref=refs/heads/${branch}`, "-f", `sha=${sha}`], cwd);
+  } catch {
+    // A branch left by an earlier merged sync PR: move it to the base's tip.
+    await ghAsync(["api", "-X", "PATCH", `repos/${repo}/git/refs/heads/${branch}`, "-f", `sha=${sha}`, "-F", "force=true"], cwd);
+  }
+  await ghAsync(["api", "-X", "POST", `repos/${repo}/merges`, "-f", `base=${branch}`, "-f", `head=${productionBranch}`, "-f", `commit_message=Sync ${baseBranch} with ${productionBranch}`], cwd);
+  return branch;
 }
 
 /**
@@ -196,11 +224,12 @@ export async function createSyncPR(
   conventions: GithubConventions = DEFAULT_GITHUB_CONVENTIONS,
 ): Promise<string | null> {
   try {
+    const head = await prepareSyncBranch(repo, productionBranch, baseBranch, cwd);
     const result = await ghAsync([
       "pr", "create",
       "--repo", repo,
       "--base", baseBranch,
-      "--head", productionBranch,
+      "--head", head,
       "--title", fillTitle(conventions.syncTitle, { base: baseBranch, production: productionBranch }),
       "--body", signed(`## Branch Sync\n\nSync \`${baseBranch}\` with \`${productionBranch}\` to backfill ${behindBy} merge commit(s) from prior promotions. No code changes — only merge commit history alignment.`, conventions),
     ], cwd);
@@ -300,11 +329,117 @@ export async function tryMergeSyncPR(
       "--repo", repo,
       "--merge",
     ], cwd);
+    clearMergeRefusal(repo, prNumber);
     return true;
   } catch (err) {
-    // Still blocked (checks pending, conflict, protection). Report at debug so a
-    // normal cycle isn't noisy — the caller reports the durable state.
-    logger?.debug(`Sync PR #${prNumber} not mergeable yet: ${err instanceof Error ? err.message : String(err)}`);
+    // Still blocked (checks pending, conflict, protection). Per cycle that is a debug fact; the
+    // durable state (the same refusal cycle after cycle) is reported by `noteMergeRefusal`.
+    const message = err instanceof Error ? err.message : String(err);
+    logger?.debug(`Sync PR #${prNumber} not mergeable yet: ${message}`);
+    const { state, head } = await readMergeState(repo, prNumber, cwd);
+    // Only a sync branch is updated. An older sync PR whose head is the production branch itself is left
+    // alone: updating it would merge the base into production. It is named in the stall warning instead.
+    if (state === "BEHIND" && head && head !== productionBranch) await updateBehindBranch(repo, prNumber, cwd, logger);
+    else if (state === "BEHIND" && head === productionBranch) await retireProductionHeadedSyncPR(repo, prNumber, cwd, logger);
+    noteMergeRefusal(repo, prNumber, state ?? "UNKNOWN", message, logger);
     return false;
   }
+}
+
+/** The PR's `mergeStateStatus` (BEHIND, DIRTY, BLOCKED, UNSTABLE, ...) and head branch; null when unreadable. */
+async function readMergeState(repo: string, prNumber: number, cwd: string): Promise<{ state: string | null; head: string | null }> {
+  try {
+    const out = await ghAsTechLeadAsync(["pr", "view", String(prNumber), "--repo", repo, "--json", "mergeStateStatus,headRefName", "--jq", '.mergeStateStatus + " " + .headRefName'], cwd);
+    const [state, head] = out.trim().split(" ");
+    return { state: state || null, head: head || null };
+  } catch {
+    return { state: null, head: null };
+  }
+}
+
+/**
+ * A sync PR an older Foreman opened with the production branch as its head can never be made current
+ * (updating it would write the base into production). Close it: the next cycle finds no open sync PR and
+ * opens a dedicated one, which can. Nothing is lost: it carried no code, only history alignment.
+ */
+async function retireProductionHeadedSyncPR(repo: string, prNumber: number, cwd: string, logger?: Logger): Promise<void> {
+  try {
+    await ghAsync(["pr", "close", String(prNumber), "--repo", repo, "--comment", "Closed by the Foreman: this sync PR is headed by the production branch and is behind its base, which cannot be updated safely. A sync PR from a dedicated sync branch replaces it on the next cycle."], cwd);
+    logger?.warn(`Sync PR #${prNumber} is production-headed and BEHIND its base — closed; a dedicated sync PR replaces it next cycle`);
+  } catch (err) {
+    logger?.warn(`Sync PR #${prNumber} is production-headed and BEHIND its base and could not be closed: ${err instanceof Error ? err.message : String(err)}`);
+  }
+}
+
+/** Update a BEHIND sync branch (never the production branch); the next cycle's retry merges it. */
+async function updateBehindBranch(repo: string, prNumber: number, cwd: string, logger?: Logger): Promise<void> {
+  try {
+    await ghAsTechLeadAsync(["api", "-X", "PUT", `repos/${repo}/pulls/${prNumber}/update-branch`], cwd);
+    logger?.info(`Sync PR #${prNumber} was behind its base — branch updated, merge retried next cycle`);
+  } catch (err) {
+    logger?.warn(`Sync PR #${prNumber} is behind its base and the branch update failed: ${err instanceof Error ? err.message : String(err)}`);
+  }
+}
+
+/**
+ * One read of every open PR's `mergeStateStatus` against the base, each cycle, whatever the review phase
+ * did or did not admit (a PR with a current approval, or one whose review attempts are spent, is never offered
+ * to a review, yet still has to merge). A feature PR that is BEHIND is updated, because with `strict`
+ * protection waiting never clears it; the updated head's checks run and the next review/merge follows.
+ * Any other structural state (DIRTY, BLOCKED, ...) leaves the branch alone and counts toward the stall
+ * warning. Sync PRs are out of scope: `tryMergeSyncPR` owns them. Returns the PRs it updated.
+ */
+export async function sweepOpenPrStates(repo: string, baseBranch: string, productionBranch: string, cwd: string, logger?: Logger): Promise<number[]> {
+  const out = await ghAsync(["pr", "list", "--repo", repo, "--state", "open", "--base", baseBranch, "--json", "number,headRefName,isDraft,mergeStateStatus", "--limit", "100"], cwd);
+  const prs: { number: number; headRefName: string; isDraft: boolean; mergeStateStatus: string }[] = JSON.parse(out || "[]");
+  const syncHeads = new Set([syncBranchName(productionBranch, baseBranch), productionBranch]);
+  const updated: number[] = [];
+  const seen = new Set<string>();
+  for (const pr of prs) {
+    seen.add(`${repo}#${pr.number}`);
+    if (pr.isDraft || syncHeads.has(pr.headRefName)) continue;
+    const state = pr.mergeStateStatus;
+    if (state === "BEHIND") {
+      try {
+        await ghAsync(["api", "-X", "PUT", `repos/${repo}/pulls/${pr.number}/update-branch`], cwd);
+        logger?.info(`PR #${pr.number} was behind ${baseBranch} — branch updated; its checks and the next review follow`);
+        updated.push(pr.number);
+      } catch (err) {
+        logger?.warn(`PR #${pr.number} is behind ${baseBranch} and the branch update failed: ${err instanceof Error ? err.message : String(err)}`);
+      }
+      noteMergeRefusal(repo, pr.number, "BEHIND", `behind ${baseBranch}`, logger);
+    } else if (state === "CLEAN" || state === "HAS_HOOKS" || state === "UNKNOWN" || !state) {
+      clearMergeRefusal(repo, pr.number);
+    } else {
+      noteMergeRefusal(repo, pr.number, state, `merge state ${state}`, logger);
+    }
+  }
+  // A PR no longer open (merged or closed) forgets its history.
+  for (const key of [...refusals.keys()]) if (key.startsWith(`${repo}#`) && !seen.has(key)) refusals.delete(key);
+  return updated;
+}
+
+/** Consecutive cycles a PR has been refused for the same state before the stall is a warning. */
+export const MERGE_STALL_WARN_CYCLES = 5;
+const refusals = new Map<string, { state: string; cycles: number; since: number }>();
+
+/**
+ * "Not mergeable yet" is a fact about this cycle; a PR refused for the same state across
+ * MERGE_STALL_WARN_CYCLES cycles has not moved. Warn then, and every that-many cycles after,
+ * with the state and how long it has been stuck, at the default log level.
+ */
+export function noteMergeRefusal(repo: string, prNumber: number, state: string, message: string, logger?: Logger, now = Date.now()): void {
+  const key = `${repo}#${prNumber}`;
+  const prev = refusals.get(key);
+  const cur = prev && prev.state === state ? { ...prev, cycles: prev.cycles + 1 } : { state, cycles: 1, since: now };
+  refusals.set(key, cur);
+  if (cur.cycles % MERGE_STALL_WARN_CYCLES === 0) {
+    const minutes = Math.round((now - cur.since) / 60_000);
+    logger?.warn(`PR ${key} refused for ${cur.cycles} consecutive cycles (${minutes} min), merge state ${state}: ${message.split("\n")[0]}`);
+  }
+}
+
+/** Forget a PR's refusal history (it merged). */
+export function clearMergeRefusal(repo: string, prNumber: number): void {
+  refusals.delete(`${repo}#${prNumber}`);
 }
