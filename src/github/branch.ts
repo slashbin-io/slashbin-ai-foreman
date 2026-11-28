@@ -173,8 +173,36 @@ export async function findOpenSyncPR(
   cwd: string,
   logger?: Logger,
 ): Promise<OpenPromotionPR | null> {
-  const prs: OpenPromotionPR[] = await findOpenPrs(repo, cwd, { base: baseBranch, head: productionBranch, limit: 1 });
-  return prs.length > 0 ? prs[0] : null;
+  // The sync branch first; a PR opened by an older Foreman with the production branch itself as head is still found.
+  for (const head of [syncBranchName(productionBranch, baseBranch), productionBranch]) {
+    const prs: OpenPromotionPR[] = await findOpenPrs(repo, cwd, { base: baseBranch, head, limit: 1 });
+    if (prs.length > 0) return prs[0];
+  }
+  return null;
+}
+
+/**
+ * The branch a sync PR comes from. It is cut from the base and has the production branch merged in, so it
+ * CONTAINS the base: a sync PR whose head was the production branch itself is BEHIND the moment the base
+ * has any commit production lacks, which `strict` branch protection refuses for good, and updating it would
+ * merge the base into production. This branch can be updated safely; production is never written.
+ */
+export function syncBranchName(productionBranch: string, baseBranch: string): string {
+  return `foreman/sync-${productionBranch}-into-${baseBranch}`;
+}
+
+/** Cut the sync branch from the base's tip (moving a leftover one there) and merge production into it. */
+async function prepareSyncBranch(repo: string, productionBranch: string, baseBranch: string, cwd: string): Promise<string> {
+  const branch = syncBranchName(productionBranch, baseBranch);
+  const sha = (await ghAsync(["api", `repos/${repo}/git/ref/heads/${baseBranch}`, "--jq", ".object.sha"], cwd)).trim();
+  try {
+    await ghAsync(["api", "-X", "POST", `repos/${repo}/git/refs`, "-f", `ref=refs/heads/${branch}`, "-f", `sha=${sha}`], cwd);
+  } catch {
+    // A branch left by an earlier merged sync PR: move it to the base's tip.
+    await ghAsync(["api", "-X", "PATCH", `repos/${repo}/git/refs/heads/${branch}`, "-f", `sha=${sha}`, "-F", "force=true"], cwd);
+  }
+  await ghAsync(["api", "-X", "POST", `repos/${repo}/merges`, "-f", `base=${branch}`, "-f", `head=${productionBranch}`, "-f", `commit_message=Sync ${baseBranch} with ${productionBranch}`], cwd);
+  return branch;
 }
 
 /**
@@ -196,11 +224,12 @@ export async function createSyncPR(
   conventions: GithubConventions = DEFAULT_GITHUB_CONVENTIONS,
 ): Promise<string | null> {
   try {
+    const head = await prepareSyncBranch(repo, productionBranch, baseBranch, cwd);
     const result = await ghAsync([
       "pr", "create",
       "--repo", repo,
       "--base", baseBranch,
-      "--head", productionBranch,
+      "--head", head,
       "--title", fillTitle(conventions.syncTitle, { base: baseBranch, production: productionBranch }),
       "--body", signed(`## Branch Sync\n\nSync \`${baseBranch}\` with \`${productionBranch}\` to backfill ${behindBy} merge commit(s) from prior promotions. No code changes — only merge commit history alignment.`, conventions),
     ], cwd);
@@ -307,21 +336,33 @@ export async function tryMergeSyncPR(
     // durable state (the same refusal cycle after cycle) is reported by `noteMergeRefusal`.
     const message = err instanceof Error ? err.message : String(err);
     logger?.debug(`Sync PR #${prNumber} not mergeable yet: ${message}`);
-    // A sync PR's head IS the production branch: `update-branch` would merge the base into production,
-    // so a BEHIND sync PR is never updated. It is named in the stall warning instead.
-    const state = await readMergeState(repo, prNumber, cwd);
+    const { state, head } = await readMergeState(repo, prNumber, cwd);
+    // Only a sync branch is updated. An older sync PR whose head is the production branch itself is left
+    // alone: updating it would merge the base into production. It is named in the stall warning instead.
+    if (state === "BEHIND" && head && head !== productionBranch) await updateBehindBranch(repo, prNumber, cwd, logger);
     noteMergeRefusal(repo, prNumber, state ?? "UNKNOWN", message, logger);
     return false;
   }
 }
 
-/** The PR's `mergeStateStatus` (BEHIND, DIRTY, BLOCKED, UNSTABLE, ...); null when it cannot be read. */
-async function readMergeState(repo: string, prNumber: number, cwd: string): Promise<string | null> {
+/** The PR's `mergeStateStatus` (BEHIND, DIRTY, BLOCKED, UNSTABLE, ...) and head branch; null when unreadable. */
+async function readMergeState(repo: string, prNumber: number, cwd: string): Promise<{ state: string | null; head: string | null }> {
   try {
-    const out = await ghAsTechLeadAsync(["pr", "view", String(prNumber), "--repo", repo, "--json", "mergeStateStatus", "--jq", ".mergeStateStatus"], cwd);
-    return out.trim() || null;
+    const out = await ghAsTechLeadAsync(["pr", "view", String(prNumber), "--repo", repo, "--json", "mergeStateStatus,headRefName", "--jq", '.mergeStateStatus + " " + .headRefName'], cwd);
+    const [state, head] = out.trim().split(" ");
+    return { state: state || null, head: head || null };
   } catch {
-    return null;
+    return { state: null, head: null };
+  }
+}
+
+/** Update a BEHIND sync branch (never the production branch); the next cycle's retry merges it. */
+async function updateBehindBranch(repo: string, prNumber: number, cwd: string, logger?: Logger): Promise<void> {
+  try {
+    await ghAsTechLeadAsync(["api", "-X", "PUT", `repos/${repo}/pulls/${prNumber}/update-branch`], cwd);
+    logger?.info(`Sync PR #${prNumber} was behind its base — branch updated, merge retried next cycle`);
+  } catch (err) {
+    logger?.warn(`Sync PR #${prNumber} is behind its base and the branch update failed: ${err instanceof Error ? err.message : String(err)}`);
   }
 }
 
@@ -329,8 +370,7 @@ async function readMergeState(repo: string, prNumber: number, cwd: string): Prom
  * A feature PR whose merge is not done and whose head is BEHIND its base is not cleared by waiting: with
  * `strict` branch protection it stays unmergeable until the branch is updated. Only BEHIND is updated; a
  * conflict or a failing check is not fixed by a base merge, and is counted toward the stall warning.
- * The head moves, so the next cycle's review judges the new head and merges it. Never called for a sync PR
- * (its head is the production branch). Returns true when the branch was updated.
+ * The head moves, so the next cycle's review judges the new head and merges it. Returns true when the branch was updated.
  */
 export async function recoverBehindPr(repo: string, prNumber: number, cwd: string, logger?: Logger): Promise<boolean> {
   let state: string | null;

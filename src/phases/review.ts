@@ -147,6 +147,13 @@ async function reviewPass(
     return false;
   }
 
+  // Before any admission gate, so a PR the review will not be offered again (held, exhausted) is still
+  // seen: a BEHIND head is updated (strict protection never clears it by waiting), and any other
+  // structural refusal repeated across passes warns. After an update the new head's checks run first.
+  let updated = false;
+  try { updated = await codeHost().recoverBehindPr(repoConfig.githubRepo, candidate.prNumber, repoConfig.repoPath, reviewLogger) === true; } catch { /* best effort: the next pass retries */ }
+  if (updated) return false;
+
   // The input this review acts on is the PR's head. A read that fails throws and fails the pass (EM#1244 f5).
   const head = await codeHost().readPrHeadSha(repoConfig, candidate.prNumber, reviewLogger);
 
@@ -260,12 +267,6 @@ async function reviewPass(
       return false;
     }
     rt.memory.reviewDefer.clear(repoName);
-    // An approved PR left unmerged, or a run that failed, may be BEHIND a strict base; waiting never clears
-    // that. A request-for-changes verdict is left alone: the author's push is what moves that head.
-    const own = (result.trailers ?? []).find((t) => t.pr === candidate.prNumber);
-    if (!own?.merged && (!result.success || own?.verdict === "APPROVE")) {
-      try { await codeHost().recoverBehindPr(repoConfig.githubRepo, candidate.prNumber, repoConfig.repoPath, reviewLogger); } catch { /* best effort: the next pass retries */ }
-    }
     if (wantsSessionReports()) {
       report = await reviewReport(repoConfig, candidate.prNumber, result.trailers ?? [], result.summary, reviewSince, reviewLogger);
     }

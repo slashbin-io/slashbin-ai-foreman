@@ -6,7 +6,7 @@ import { writeFileSync, chmodSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { mkTmp } from "./tmp-dir.mjs";
-import { tryMergeSyncPR, recoverBehindPr, noteMergeRefusal, MERGE_STALL_WARN_CYCLES } from "../dist/github/branch.js";
+import { tryMergeSyncPR, recoverBehindPr, createSyncPR, noteMergeRefusal, MERGE_STALL_WARN_CYCLES } from "../dist/github/branch.js";
 
 const dir = mkTmp("fake-gh-behind-");
 const log = join(dir, "calls");
@@ -16,6 +16,8 @@ echo "$*" >> "${log}"
 case "$1 $2" in
   "pr merge") echo "Pull request is not mergeable" >&2; exit 1;;
   "pr view") cat "${stateFile}";;
+  "pr create") echo "https://github.com/o/r/pull/99";;
+  "api repos/o/r/git/ref/heads/develop") echo abc123;;
 esac
 exit 0
 `);
@@ -42,10 +44,32 @@ for (const state of ["DIRTY", "UNSTABLE", "BLOCKED", "CLEAN"]) {
   });
 }
 
-test("a BEHIND sync PR is never branch-updated: its head is the production branch", async () => {
-  reset("BEHIND");
+test("a BEHIND sync PR on a sync branch is updated", async () => {
+  reset("BEHIND foreman/sync-main-into-develop");
+  assert.equal(await tryMergeSyncPR("o/r", 6, tmpdir(), logger), false);
+  assert.match(calls(), /api -X PUT repos\/o\/r\/pulls\/6\/update-branch/);
+});
+
+test("a BEHIND legacy sync PR whose head is the production branch is never updated", async () => {
+  reset("BEHIND main");
   assert.equal(await tryMergeSyncPR("o/r", 6, tmpdir(), logger), false);
   assert.doesNotMatch(calls(), /update-branch/);
+});
+
+test("a DIRTY sync PR is not updated", async () => {
+  reset("DIRTY foreman/sync-main-into-develop");
+  assert.equal(await tryMergeSyncPR("o/r", 6, tmpdir(), logger), false);
+  assert.doesNotMatch(calls(), /update-branch/);
+});
+
+test("createSyncPR cuts a sync branch from the base, merges production into it, and never writes production", async () => {
+  reset("");
+  await createSyncPR("o/r", "main", "develop", 2, tmpdir(), logger);
+  const c = calls();
+  assert.match(c, /git\/refs .*ref=refs\/heads\/foreman\/sync-main-into-develop/);
+  assert.match(c, /merges -f base=foreman\/sync-main-into-develop -f head=main/);
+  assert.match(c, /pr create .*--head foreman\/sync-main-into-develop/);
+  assert.doesNotMatch(c, /base=main\b/);
 });
 
 test("the same refusal across cycles warns with state and cycle count; a changed state restarts the count", () => {
