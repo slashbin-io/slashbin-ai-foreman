@@ -89,3 +89,17 @@ test("the GitHub layer holds no synchronous process call: no execFileSync, no sl
     assert.doesNotMatch(code, /execFileSync|spawnSync|sleepSync|Atomics\.wait/, f);
   }
 });
+
+test("featurePrUrlFallback: a newer sync PR never answers for the feature PR", async () => {
+  const bin = mkdtempSync(join(tmpdir(), "foreman-fakegh-"));
+  writeFileSync(join(bin, "gh"), `#!/bin/sh\necho '[{"url":"https://x/pull/8","headRefName":"foreman/sync-main-into-develop"},{"url":"https://x/pull/4","headRefName":"foreman/4-thing"}]'\n`);
+  chmodSync(join(bin, "gh"), 0o755);
+  const saved = process.env.PATH;
+  process.env.PATH = `${bin}:${saved}`;
+  try {
+    const cfg = { ...loadConfig(), name: "r", githubRepo: "o/r", repoPath: bin, baseBranch: "develop", productionBranch: "main" };
+    assert.equal(await featurePrUrlFallback(cfg, []), "https://x/pull/4");
+  } finally {
+    process.env.PATH = saved;
+  }
+});
