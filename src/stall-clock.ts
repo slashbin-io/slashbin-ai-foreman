@@ -14,7 +14,9 @@ import { HandoffNotSaved, unstickKey, type UnstickEntry } from "./unstick.js";
 
 export type StallCause =
   | "verify-deferred" | "verify-handoff-failed" | "corrective-chain-stopped"
-  | "release-sign-off" | "release-blocked-label" | "handoff-gave-up" | "epic-unanswered";
+  | "release-sign-off" | "release-blocked-label" | "handoff-gave-up" | "epic-unanswered"
+  | "stage-approved" | "stage-prod-verify-held" | "stage-awaiting-release"
+  | "stage-releasing" | "stage-pending-verification" | "stage-awaiting-signoff";
 export type StallState = "open" | "escalated" | "resolved";
 
 export interface StallRecord {

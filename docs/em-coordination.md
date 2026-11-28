@@ -312,6 +312,15 @@ number, and resolves when the epic is no longer in a scan's list. The repo recor
 with an open stall, so a restart resolves them without remembering the previous scan. A scan runs while an
 `epic-decompose` call is open only if that index is non-empty.
 
+It also reports stage stalls (`src/stage-stalls.ts`) for a card that waits where no phase fails, read from the work
+source's snapshot, owned per the process map: `stage-approved` and `stage-prod-verify-held` (resolver `Foreman`: it
+builds and re-verifies those itself, so a stall there is a Foreman fault and the `stalled` raise takes it to the EM
+seat), and `stage-pending-verification`, `stage-awaiting-release`, `stage-releasing` and `stage-awaiting-signoff`
+(resolver `unstickEscalationOwner`: the outcome gate and the release are the EM's). Each starts on the first pass that
+sees the card at the stage and resolves on the first that sees it elsewhere or closed; the repo record's `stageStalls`
+index finds a closed card's stall. None opens on a card another unresolved stall already covers (its own record, or
+named in a release stall's `affected`). A pass that cannot read the open issues or the stages touches none of them.
+
 Two phases report to it, and the old tooling-hold clock (`toolingHeld`) is gone. A deferred verifier check (`src/phases/verify.ts`) opens
 `verify-deferred`; an `escalated` one frees the repo for the next issue (the PR is still re-asked, uncharged), and a pass, a charged
 verdict or a filed `check-defect` resolves it. A stopped corrective chain (`src/phases/corrective-chain.ts`) opens

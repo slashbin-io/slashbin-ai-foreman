@@ -39,6 +39,9 @@ import { unlinkedFixPremise } from "./implement.js";
 import { codeHost } from "../plugins/registry.js";
 import type { CodeHost } from "../code-host.js";
 import type { ForemanRuntime } from "../runtime.js";
+import { workSourceFor } from "../work-source.js";
+import { planStageStalls } from "../stage-stalls.js";
+import type { StageOrDone } from "../lifecycle.js";
 
 function transcript(repoConfig: RepoConfig, what: string, cycleNumber: number): string {
   const ts = new Date().toISOString().replace(/[:.]/g, "-");
@@ -216,6 +219,63 @@ async function widenHandoffIndex(rt: ForemanRuntime, repoConfig: RepoConfig, kno
   if (await rt.records.updateRepoRecord(repoConfig, (d) => { d.handoffStalls = [...new Set([...(d.handoffStalls ?? []), ...fresh])].sort((a, b) => a - b); })) for (const n of fresh) known.add(n);
 }
 
+/**
+ * Stage stalls (stage-stalls.ts): each open card the work source shows at a ruled stage holds a stall of that stage's
+ * cause, opened on the first pass that sees it there and resolved on the first that sees it elsewhere or closed; the
+ * sweep raises it past the bound. The repo record's `stageStalls` index finds a closed card's stall, which no list
+ * shows; a card is indexed before its stall is reported, so none is ever unfindable. Runs only when the open issues
+ * and their stages were both read; dark without the flag. Anything unreadable is left for the next pass.
+ */
+async function trackStageStalls(rt: ForemanRuntime, repoConfig: RepoConfig, config: AgentConfig, open: ReadonlySet<number> | null, loaded: IssueRecords, repoRecord: RepoRecord | null, log: Logger): Promise<void> {
+  if (!stallClockEnabled() || repoConfig.syncOnly || !open) return;
+  let stages: Map<number, StageOrDone>;
+  try {
+    const items = await workSourceFor(repoConfig).snapshot(repoConfig, log);
+    stages = new Map(items.map((i) => [i.item.issueNumber, i.stage]));
+  } catch (err) {
+    log.warn(`Could not read stages for the stage stalls: ${err instanceof Error ? err.message : String(err)}`);
+    return;
+  }
+  const indexed = repoRecord?.stageStalls ?? [];
+  const gone = indexed.filter((n) => !open.has(n));
+  const closed = gone.length > 0 ? await rt.records.loadIssueRecords(repoConfig, gone) : null;
+  const unreadable = [...loaded.unavailable, ...(closed?.unavailable ?? [])].filter((n) => indexed.includes(n));
+  const plan = planStageStalls(
+    stages,
+    new Map([...loaded.records].map(([n, r]) => [n, r.stalls])),
+    new Map([...(closed?.records ?? [])].map(([n, r]) => [n, r.stalls])),
+    unreadable,
+    repoConfig.githubRepo,
+  );
+  const now = new Date().toISOString();
+  const index = new Set(plan.index);
+  for (const { issue, cause } of plan.resolve) {
+    try { await resolveStall(rt, repoConfig, issue, cause, now); }
+    catch (err) {
+      index.add(issue); // unresolved: the next pass finds it again
+      log.warn(`Could not resolve the ${cause} stall on #${issue}: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+  const next = [...index].sort((a, b) => a - b);
+  const same = next.length === indexed.length && next.every((n) => indexed.includes(n));
+  // Index first: a stall reported on a card the index does not hold would be lost once the card closes.
+  if (!same && !await rt.records.updateRepoRecord(repoConfig, (d) => { d.stageStalls = next.length > 0 ? next : undefined; })) {
+    log.warn("Could not save the stage-stall index; no stage stall is reported this pass");
+    return;
+  }
+  for (const { issue, rule } of plan.report) {
+    try {
+      await reportStall(rt, repoConfig, {
+        issue, cause: rule.cause, eventAt: now, affected: [`${repoConfig.githubRepo}#${issue}`],
+        resolver: rule.resolver === "EM" ? config.unstickEscalationOwner ?? "EM" : rule.resolver,
+        nextAction: rule.nextAction, resumptionCondition: rule.resumptionCondition,
+      });
+    } catch (err) {
+      log.warn(`Could not report the ${rule.cause} stall on #${issue}: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+}
+
 /** A handoff the pass gave up on: the stall starts when the question first appeared. Issue 0 and `stalled` are never reported. */
 async function reportGiveUp(rt: ForemanRuntime, repoConfig: RepoConfig, config: AgentConfig, log: Logger, c: UnstickCandidate, entry: Pick<UnstickEntry, "since">, known: Set<number>): Promise<void> {
   if (c.issue < 1 || c.kind === "stalled" || !stallClockEnabled()) return;
@@ -307,6 +367,7 @@ export async function tryUnstick(
     }
     // The repo's own record holds the questions about no issue; unreadable, none of them is touched this pass.
     const loaded = await rt.records.loadIssueRecords(repoConfig, new Set(open ?? []));
+    await trackStageStalls(rt, repoConfig, config, open, loaded, repoRecord, log);
     // The epics' own records: their `stalled` questions are delivered from here, to the epic's repo and number.
     const epicLoaded = home && epics.length > 0 ? await rt.records.loadIssueRecords(home, new Set(epics)) : null;
     await withdrawStaleUnlinkedFixes(rt, repoConfig, config, issues, loaded, log);

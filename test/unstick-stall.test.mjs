@@ -245,3 +245,102 @@ test("a legacy escalated release gate (recalled, then given up on) resolves its 
   assert.equal((await w.stall(7, "handoff-gave-up")).state, "resolved");
   assert.equal((await repoRecordOf(w.rt, w.repo)).handoffStalls, undefined, "the index clears");
 });
+
+// --- Stage stalls: approved / prodVerifyHeld -> Foreman, awaitingRelease -> the escalation owner (stage-stalls.ts) ---
+import { activeWorkSource } from "../dist/plugins/registry.js";
+import { registerWorkSource } from "../dist/work-source.js";
+import { planStageStalls } from "../dist/stage-stalls.js";
+
+/** Runs `body` with the work source's snapshot answering `stages()` ({ issue: stage }), or throwing when it returns null. */
+async function withStages(stages, body) {
+  const real = activeWorkSource();
+  registerWorkSource({ ...real, snapshot: async () => {
+    const s = stages();
+    if (s === null) throw new Error("source down");
+    return Object.entries(s).map(([n, stage]) => ({ item: { issueNumber: Number(n), repo: "o/host" }, stage, detail: "" }));
+  } });
+  try { await body(); } finally { registerWorkSource(real); }
+}
+
+test("an approved card opens a Foreman-owned stage stall that keeps its start and resolves when the card moves", async () => {
+  const w = world();
+  writeFileSync(openFile, '[{"number":7,"title":"t","labels":[]}]');
+  let stage = "approved";
+  await withStages(() => ({ 7: stage }), async () => {
+    await w.pass(1);
+    const s = await w.stall(7, "stage-approved");
+    assert.equal(s.state, "open");
+    assert.equal(s.resolver, "Foreman");
+    assert.deepEqual(s.affected, ["o/host#7"]);
+    assert.deepEqual((await repoRecordOf(w.rt, w.repo)).stageStalls, [7]);
+    await w.pass(2);
+    assert.equal((await w.stall(7, "stage-approved")).startedAt, s.startedAt, "a repeat never re-stamps the start");
+    stage = "implementing";
+    await w.pass(3);
+    assert.equal((await w.stall(7, "stage-approved")).state, "resolved");
+    assert.equal((await repoRecordOf(w.rt, w.repo)).stageStalls, undefined);
+  });
+});
+
+test("prod verification held is the Foreman's; awaiting release is the escalation owner's; a move between them swaps the stall", async () => {
+  const w = world();
+  writeFileSync(openFile, '[{"number":7,"title":"t","labels":[]},{"number":8,"title":"t","labels":[]}]');
+  let s7 = "awaitingRelease";
+  await withStages(() => ({ 7: s7, 8: "prodVerifyHeld" }), async () => {
+    await w.pass(1);
+    assert.equal((await w.stall(7, "stage-awaiting-release")).resolver, "owner-login");
+    assert.equal((await w.stall(8, "stage-prod-verify-held")).resolver, "Foreman");
+    s7 = "prodVerifyHeld";
+    await w.pass(2);
+    assert.equal((await w.stall(7, "stage-awaiting-release")).state, "resolved");
+    assert.equal((await w.stall(7, "stage-prod-verify-held")).state, "open");
+    assert.deepEqual((await repoRecordOf(w.rt, w.repo)).stageStalls, [7, 8]);
+  });
+});
+
+test("a stage stall on a card that closes resolves through the index, also after a restart", async () => {
+  const w = world();
+  writeFileSync(openFile, '[{"number":7,"title":"t","labels":[]}]');
+  await withStages(() => ({ 7: "awaitingRelease" }), async () => {
+    await w.pass(1);
+    assert.equal((await w.stall(7, "stage-awaiting-release")).state, "open");
+    writeFileSync(openFile, "[]");
+    w.restart();
+    await w.pass(2);
+    assert.equal((await w.stall(7, "stage-awaiting-release")).state, "resolved");
+    assert.equal((await repoRecordOf(w.rt, w.repo)).stageStalls, undefined);
+  });
+});
+
+test("stage stalls: flag off writes nothing, and an unreadable source touches nothing", async () => {
+  writeFileSync(openFile, '[{"number":7,"title":"t","labels":[]}]');
+  const off = world({ flag: false });
+  await withStages(() => ({ 7: "approved" }), async () => { await off.pass(1); });
+  assert.equal(await off.stall(7, "stage-approved"), undefined);
+  const w = world();
+  let up = true;
+  await withStages(() => (up ? { 7: "approved" } : null), async () => {
+    await w.pass(1);
+    up = false;
+    await w.pass(2);
+    assert.equal((await w.stall(7, "stage-approved")).state, "open", "a failed stage read resolves nothing");
+    assert.deepEqual((await repoRecordOf(w.rt, w.repo)).stageStalls, [7]);
+  });
+});
+
+test("planStageStalls keeps an unreadable indexed card and resolves a closed card's live stall only", () => {
+  const live = { "stage-approved": { state: "open", cause: "stage-approved", affected: [] } };
+  const done = { "stage-approved": { state: "resolved", cause: "stage-approved", affected: [] } };
+  const plan = planStageStalls(new Map([[1, "approved"], [2, "merged"]]), new Map([[1, undefined], [2, live]]), new Map([[3, live], [4, done]]), [5], "o/host");
+  assert.deepEqual(plan.report.map((r) => [r.issue, r.rule.cause]), [[1, "stage-approved"]]);
+  assert.deepEqual(plan.resolve, [{ issue: 2, cause: "stage-approved" }, { issue: 3, cause: "stage-approved" }]);
+  assert.deepEqual(plan.index, [1, 5]);
+});
+
+test("a card another stall already owns opens no stage stall, on its own record or named in a release stall's affected", () => {
+  const release = { "release-sign-off": { state: "escalated", cause: "release-sign-off", affected: ["o/host#1", "o/host#2"] } };
+  const plan = planStageStalls(new Map([[1, "awaitingSignoff"], [2, "awaitingSignoff"], [3, "releasing"], [4, "pendingVerification"]]),
+    new Map([[1, release], [2, undefined], [3, undefined], [4, undefined]]), new Map(), [], "o/host");
+  assert.deepEqual(plan.report.map((r) => [r.issue, r.rule.cause, r.rule.resolver]), [[3, "stage-releasing", "EM"], [4, "stage-pending-verification", "EM"]]);
+  assert.deepEqual(plan.index, [3, 4]);
+});
