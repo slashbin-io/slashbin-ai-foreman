@@ -54,7 +54,7 @@ test("checkDev --keys carries the mint key and both bearer keys, searched dev,pr
   setMode({});
   await plugin.qa.check({}, config, { repo: CONSOLE, pr: 1, out, local: false }, quiet);
   const c = all().filter((a) => a.includes("check") && !a.includes("--local")).pop();
-  assert.deepEqual(keysOf(c), [`DEV_SESSION_MINT_KEY@${CONSOLE}`, ...QA_BEARER_KEYS]);
+  assert.deepEqual(keysOf(c), [`DEV_SESSION_MINT_KEY?@${CONSOLE}`, ...QA_BEARER_KEYS]);
   assert.equal(c[c.indexOf("--keys") + 2], "dev,prd");
 });
 

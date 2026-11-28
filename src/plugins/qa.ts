@@ -174,7 +174,10 @@ export class QaPlugin implements ForemanPlugin {
     if (!em || !qa) return { kind: "errored", detail: "emRepoPath and qaPath must both be set" };
     const runner = config.qaSecretsRunner;
     if (!runner) return { kind: "errored", detail: "qaSecretsRunner is not set, so the dev run has no way to get its secret" };
-    const keys = [`${this.mintKey}@${repo}`, ...qaBearerKeys(config)].join(",");
+    // `?`: only a repo that signs in has a mint key. A public site (Docs) has none, and a required
+    // pin made the runner exit 2 before QA started (Slashbin-io-docs#844). QA itself still refuses
+    // a run whose registry row declares a mint_key and gets none.
+    const keys = [`${this.mintKey}?@${repo}`, ...qaBearerKeys(config)].join(",");
     const args = ["--keys", keys, QA_KEY_CONFIGS, "--", "node", join(qa, "bin/qa.mjs"), "check", "--repo", repo, "--pr", String(pr), "--out", out];
     const r = await runAgentCli(em, runner, args, buildQaEnv(config), config, QA_MAX_DURATION_MS);
     return readOutcome(r, out, logger);
