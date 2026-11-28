@@ -232,9 +232,14 @@ async function widenHandoffIndex(rt: ForemanRuntime, repoConfig: RepoConfig, kno
 async function trackStageStalls(rt: ForemanRuntime, repoConfig: RepoConfig, config: AgentConfig, open: ReadonlySet<number> | null, loaded: IssueRecords, repoRecord: RepoRecord | null, log: Logger): Promise<IssueRecords> {
   if (!stallClockEnabled() || repoConfig.syncOnly || !open) return loaded;
   let stages: Map<number, StageOrDone>;
+  const held = new Set<number>();
   try {
-    const items = await workSourceFor(repoConfig).snapshot(repoConfig, log);
+    const source = workSourceFor(repoConfig);
+    const items = await source.snapshot(repoConfig, log);
     stages = new Map(items.map((i) => [i.item.issueNumber, i.stage]));
+    if (source.pickupHold) {
+      for (const [n, s] of stages) if (s === "approved" && await source.pickupHold(repoConfig, n)) held.add(n);
+    }
   } catch (err) {
     log.warn(`Could not read stages for the stage stalls: ${err instanceof Error ? err.message : String(err)}`);
     return loaded;
@@ -257,6 +262,7 @@ async function trackStageStalls(rt: ForemanRuntime, repoConfig: RepoConfig, conf
     unreadable,
     repoConfig.githubRepo,
     buildOccupied,
+    held,
   );
   const now = new Date().toISOString();
   const index = new Set(plan.index);

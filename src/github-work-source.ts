@@ -17,7 +17,7 @@ import { isApprovedUnbuilt } from "./lifecycle.js";
 import { laterStageLabels } from "./github/lifecycle-scan.js";
 import { blockerRef, blockersOf, unmetBlockers } from "./github/blockers.js";
 import { acceptanceVerdict } from "./github/acceptance-gate.js";
-import { announceHold, parseReadiness, type HoldKind, readIssueBody, unmetReadiness } from "./github/readiness.js";
+import { announceHold, parseReadiness, type HoldKind, readIssueBody, readinessCheck } from "./github/readiness.js";
 import { CardReads, issueStates } from "./github/cards.js";
 import { GitHubRecordStore } from "./github/record-store.js";
 import { ghAsync } from "./github/gh.js";
@@ -737,6 +737,38 @@ export class GitHubIssueConnector implements WorkSourceAdapter {
     return actionable;
   }
 
+  /** The stage-stall path's read of the picker's hold (adapters.ts `pickupHold`): the same checks, nothing announced. */
+  async pickupHold(config: RepoConfig, num: number): Promise<string | null> {
+    const { hold, unreadable } = await this.holdOf(config, num);
+    return unreadable ? null : hold;
+  }
+
+  /**
+   * The one hold `waitsOnBlocker` and `pickupHold` share, read-only: an unmet blocker first, then Pre-Flight
+   * readiness, then acceptance. `unreadable`: the hold is a failed read, not a judged precondition.
+   */
+  private async holdOf(config: RepoConfig, num: number): Promise<{ hold: string | null; announce: { kind: HoldKind; reasons: string[] } | null; unreadable: boolean }> {
+    try {
+      const unmet = unmetBlockers(await blockersOf(config.githubRepo, num, config.repoPath), config.lifecycleLabels);
+      if (unmet.length) return { hold: `blocked by ${unmet.map((b) => blockerRef(b, config.githubRepo)).join(", ")} until it merges`, announce: null, unreadable: false };
+    } catch (err) {
+      return { hold: `its blockers could not be read (${err instanceof Error ? err.message : String(err)})`, announce: null, unreadable: true };
+    }
+    try {
+      const body = await readIssueBody(config, num);
+      const readiness = await readinessCheck(parseReadiness(body), async (args) => await ghAsync(args, config.repoPath));
+      const readinessUnmet = readiness.unmet;
+      // A readiness hold that is only failed reads is not a judged precondition: the picker still holds the card, but
+      // the stage stall stays visible (Tech Lead review of PR 445, R1/R2).
+      if (readinessUnmet.length) return { hold: `Pre-Flight readiness not met: ${readinessUnmet.join("; ")}`, announce: { kind: "readiness", reasons: readinessUnmet }, unreadable: readiness.unreadable };
+      const verdict = acceptanceVerdict(body);
+      if (!verdict.ok) return { hold: `no acceptance script: ${verdict.reason}`, announce: { kind: "acceptance", reasons: [verdict.reason ?? "no acceptance"] }, unreadable: false };
+      return { hold: null, announce: null, unreadable: false };
+    } catch (err) {
+      return { hold: `its Pre-Flight could not be read (${err instanceof Error ? err.message : String(err)})`, announce: null, unreadable: true };
+    }
+  }
+
   /**
    * True while a GitHub "blocked by" issue of `num` has not merged to the base
    * branch (dependencies.ts). An unreadable dependency list holds the issue too:
@@ -744,32 +776,7 @@ export class GitHubIssueConnector implements WorkSourceAdapter {
    */
   private async waitsOnBlocker(config: RepoConfig, num: number, logger: Logger, held: WaitingItem[] = []): Promise<boolean> {
     const key = `${config.githubRepo}#${num}`;
-    let hold: string | null;
-    let announce: { kind: HoldKind; reasons: string[] } | null = null;
-    try {
-      const unmet = unmetBlockers(await blockersOf(config.githubRepo, num, config.repoPath), config.lifecycleLabels);
-      hold = unmet.length ? `blocked by ${unmet.map((b) => blockerRef(b, config.githubRepo)).join(", ")} until it merges` : null;
-    } catch (err) {
-      hold = `its blockers could not be read (${err instanceof Error ? err.message : String(err)})`;
-    }
-    if (hold === null) {
-      try {
-        const body = await readIssueBody(config, num);
-        const readinessUnmet = await unmetReadiness(parseReadiness(body), async (args) => await ghAsync(args, config.repoPath));
-        if (readinessUnmet.length) {
-          hold = `Pre-Flight readiness not met: ${readinessUnmet.join("; ")}`;
-          announce = { kind: "readiness", reasons: readinessUnmet };
-        } else {
-          const verdict = acceptanceVerdict(body);
-          if (!verdict.ok) {
-            hold = `no acceptance script: ${verdict.reason}`;
-            announce = { kind: "acceptance", reasons: [verdict.reason ?? "no acceptance"] };
-          }
-        }
-      } catch (err) {
-        hold = `its Pre-Flight could not be read (${err instanceof Error ? err.message : String(err)})`;
-      }
-    }
+    const { hold, announce } = await this.holdOf(config, num);
     if (hold === null) {
       this.blockerHoldAnnounced.delete(key);
       this.holdCommented.delete(`${key}|readiness`);

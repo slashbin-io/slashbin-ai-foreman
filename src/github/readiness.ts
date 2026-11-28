@@ -135,15 +135,24 @@ async function holds(p: Predicate, read: GhRead): Promise<boolean> {
  * invalid line. Empty when the issue is ready.
  */
 export async function unmetReadiness(readiness: Readiness, read: GhRead): Promise<string[]> {
+  return (await readinessCheck(readiness, read)).unmet;
+}
+
+/**
+ * `unmetReadiness`, plus whether the hold is only a failed read: `unreadable` is true when every unmet entry is a
+ * predicate GitHub could not answer. A judged one (false, or an invalid line) makes it a real hold.
+ */
+export async function readinessCheck(readiness: Readiness, read: GhRead): Promise<{ unmet: string[]; unreadable: boolean }> {
   const unmet = [...readiness.invalid];
+  let judged = unmet.length;
   for (const p of readiness.predicates) {
     try {
-      if (!await holds(p, read)) unmet.push(describePredicate(p));
+      if (!await holds(p, read)) { unmet.push(describePredicate(p)); judged++; }
     } catch (err) {
       unmet.push(`${describePredicate(p)} (unreadable: ${err instanceof Error ? err.message.split("\n")[0] : String(err)})`);
     }
   }
-  return unmet;
+  return { unmet, unreadable: unmet.length > 0 && judged === 0 };
 }
 
 /** The hidden marker a hold comment carries, naming the reason it announced. */

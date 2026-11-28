@@ -469,3 +469,12 @@ test("an open feature PR holds the build: approved cards behind it open no stall
     assert.equal((await w.stall(1, "stage-approved")).state, "open", "no PR: the clock keeps running");
   }));
 });
+
+test("an approved card the picker holds on a precondition opens no stall, and a live one resolves", () => {
+  const live = { "stage-approved": { state: "open", cause: "stage-approved", affected: [] } };
+  const plan = planStageStalls(new Map([[1, "approved"], [2, "approved"], [3, "approved"]]), new Map([[1, undefined], [2, live], [3, undefined]]), new Map(), [], "o/host", false, new Set([1, 2]));
+  assert.deepEqual(plan.report.map((r) => r.issue), [3], "only the unheld approved card is reported");
+  assert.deepEqual(plan.resolve, [{ issue: 2, cause: "stage-approved" }], "a live stall on a held card resolves");
+  const notApproved = planStageStalls(new Map([[1, "prodVerifyHeld"]]), new Map([[1, undefined]]), new Map(), [], "o/host", false, new Set([1]));
+  assert.deepEqual(notApproved.report.map((r) => [r.issue, r.rule.cause]), [[1, "stage-prod-verify-held"]], "a hold only excuses approved");
+});

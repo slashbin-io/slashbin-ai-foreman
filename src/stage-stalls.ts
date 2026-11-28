@@ -20,6 +20,11 @@
 // on a card that is now queued resolves (2026-11-28: an S2 card behind ten approved S0 cards while
 // a PR was in review, was raised as a Foreman fault).
 //
+// An approved card the picker holds on a precondition it judged on the card (`held`: an open blocker, unmet
+// Pre-Flight readiness, no acceptance) is not stalled:
+// it waits on that, not on the Foreman, and a stall already open on it resolves. A failed read is not a hold, so a read
+// that keeps failing still stalls (2026-11-28: a service card, held by an `issue_closed:` readiness line, was raised as a Foreman fault).
+//
 // Read from the work source's own snapshot, the stage the board shows. A stall starts when the unstick pass
 // first sees the card at the stage (the record keeps that start; nothing earlier is known), and resolves on
 // the first pass that sees the card anywhere else. Dark behind FOREMAN_STALL_CLOCK like every stall.
@@ -87,7 +92,8 @@ export interface StageStallPlan {
  * the readable stalls of indexed cards no longer open. `unreadable`: indexed cards whose record could not be read,
  * left alone and kept in the index for the next pass. `buildOccupied`: the picker's own read that the repo's build is
  * taken (a build session running, or an open feature PR), which the board cannot show: a building card keeps its
- * `approved` label until its PR is labelled. Pure.
+ * `approved` label until its PR is labelled.
+ * `held`: approved cards the picker holds on a precondition. Pure.
  */
 export function planStageStalls(
   stages: ReadonlyMap<number, StageOrDone>,
@@ -96,6 +102,7 @@ export function planStageStalls(
   unreadable: Iterable<number>,
   repo: string,
   buildOccupied = false,
+  held: ReadonlySet<number> = new Set(),
 ): StageStallPlan {
   const plan: StageStallPlan = { report: [], resolve: [], index: [] };
   const index = new Set<number>(unreadable);
@@ -113,7 +120,7 @@ export function planStageStalls(
   const building = buildOccupied || [...stages.values()].some((s) => BUILD_STAGES.has(s));
   for (const [issue, cardStalls] of open) {
     const stage = stages.get(issue);
-    const queued = stage === "approved" && building;
+    const queued = stage === "approved" && (building || held.has(issue));
     const rule = stage && !queued ? STAGE_STALL_RULES[stage] : undefined;
     for (const cause of STAGE_STALL_CAUSES) {
       if (rule?.cause === cause && (live(cardStalls, cause) || (other(cardStalls).length === 0 && !named.has(issue)))) {
