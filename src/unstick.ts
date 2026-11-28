@@ -174,6 +174,20 @@ export interface UnstickCandidate {
 
 export const unstickKey = (issue: number, kind: UnstickKind, tag?: string): string => `${issue}:${kind}${tag ? `:${tag}` : ""}`;
 
+/**
+ * The holds that stand on one open PR: the revise and review stages raise them, and they release only from that PR
+ * (a push, a ruling). A PR that merged or closed takes neither, so without a check here the hold stood forever and the
+ * card sat in Blocked after the work had shipped (2026-11-28: a docs card sat Blocked after its PR merged with a stalemate standing).
+ */
+export const PR_HOLD_KINDS: ReadonlySet<UnstickKind> = new Set<UnstickKind>(["revision-stalemate", "revision-exhausted", "needs-ruling"]);
+
+/** The PR a PR hold stands on, read from its reason (every raiser names it first: "... PR #N ..."), or null. Pure. */
+export function prHoldPr(entry: Pick<UnstickEntry, "kind" | "reason">): number | null {
+  if (!PR_HOLD_KINDS.has(entry.kind)) return null;
+  const m = /\bPR #(\d+)\b/.exec(entry.reason);
+  return m ? Number(m[1]) : null;
+}
+
 /** The kinds only an event can report: there is no persisted condition to read them from. */
 /** Immutable constant (not state): the kinds only an event can report. */
 export const EVENT_KINDS: ReadonlySet<UnstickKind> = new Set<UnstickKind>([
