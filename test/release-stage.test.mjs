@@ -1255,14 +1255,13 @@ test("a develop-vs-main difference confined to .claude/ is not a stalled promoti
   assert.deepEqual(commentsOn(5), [], "the pr-approved issue is not told a release is stalled");
 });
 
-test("one file outside .claude/ still counts: the stall is reported, with only the production files counted", async () => {
+test("one file outside .claude/ still counts: with no issue naming it, a handoff is filed (no unnamed-stall WARN), counting only the production files", async () => {
   world({ issues: [], comparePaths: [".claude/skills/a/SKILL.md", "src/server.ts"] });
   const log = captureLogger();
   await tryPromotion(rt, repo, log, 21_000, true);
-  const warns = log.at("warn");
-  assert.equal(warns.length, 1);
-  assert.match(warns[0], STALLED);
-  assert.match(warns[0], /carries 1 changed file\(s\)/);
+  assert.ok(!log.at("warn").some((m) => STALLED.test(m)), "not reported as an unnamed stall");
+  assert.ok(log.at("info").some((m) => /Filed drift handoff|Could not file a drift handoff/.test(m)) || log.at("warn").some((m) => /Could not file a drift handoff/.test(m)), "a handoff was attempted");
+  assert.ok(log.at("info").some((m) => /carries 1 changed file\(s\)/.test(m)), "only the production file is counted");
 });
 
 test("a release stopped for a person names its issue and hold, once per change — never 'no issue names the work'", async () => {

@@ -18,7 +18,7 @@ export interface DependencyHostPort {
   findOpenDependencyBatchIssue(repo: string, cwd: string, logger: Logger, conventions?: GithubConventions): Promise<{ number: number } | undefined>;
   describeDependencyPR(number: number, title: string, body?: string): DependencyChange;
   buildDependencyBatchIssue(landingBranch: string, changes: readonly DependencyChange[], conventions?: GithubConventions, baseBranch?: string): { title: string; body: string };
-  createDependencyBatchIssue(repo: string, cwd: string, title: string, body: string, labels: string[], logger?: Logger): Promise<number | null>;
+  createIssue(repo: string, cwd: string, title: string, body: string, labels: string[], logger?: Logger): Promise<number | null>;
 }
 
 /** What the sweep found open. */
@@ -111,10 +111,10 @@ export function batchIssueLabels(repoConfig: Pick<RepoConfig, "dependencyPreAppr
  * on the repo's base branch, never production.
  */
 export class BatchIssueFiler {
-  constructor(private readonly host: Pick<DependencyHostPort, "createDependencyBatchIssue">) {}
+  constructor(private readonly host: Pick<DependencyHostPort, "createIssue">) {}
 
   async file(repoConfig: RepoConfig, issue: ComposedIssue, logger: Logger): Promise<number | null> {
-    return await this.host.createDependencyBatchIssue(
+    return await this.host.createIssue(
       repoConfig.githubRepo, repoConfig.repoPath, issue.title, issue.body,
       batchIssueLabels(repoConfig), logger,
     );
