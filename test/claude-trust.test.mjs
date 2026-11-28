@@ -152,7 +152,7 @@ test("trustManagedRepos trusts every configured checkout on disk and skips one n
 
 test("config: trustManagedRepos defaults on; the env var turns it off", () => {
   const p = join(tmp, "cfg.json");
-  writeFileSync(p, JSON.stringify({ repos: [{ name: "t", repoPath: tmp, githubRepo: "example/t" }] }));
+  writeFileSync(p, JSON.stringify({ confineSessions: false, repos: [{ name: "t", repoPath: tmp, githubRepo: "example/t" }] }));
   assert.equal(loadConfig(p).trustManagedRepos, true);
   process.env.AI_AGENT_TRUST_MANAGED_REPOS = "false";
   try { assert.equal(loadConfig(p).trustManagedRepos, false); }
@@ -200,7 +200,7 @@ const runStage = async (f, logger, extraEnv = {}) => {
   process.chdir(f.home);
   try {
     const p = join(f.home, "cfg.json");
-    writeFileSync(p, JSON.stringify({ repos: [{ name: "t", repoPath: f.repo, githubRepo: "example/t" }] }));
+    writeFileSync(p, JSON.stringify({ confineSessions: false, repos: [{ name: "t", repoPath: f.repo, githubRepo: "example/t" }] }));
     const repo = { ...loadConfig(p).repos[0], sessionEnv: [...loadConfig(p).repos[0].sessionEnv, "FAKE_DROP_TRUST"] };
     await runCustomStage(rt.trust, repo, { id: "lint", skillPath: "/opt/lint/SKILL.md" },
       { prNumber: 7, headSha: "a".repeat(40), issueNumbers: [3] }, logger).catch(() => {});

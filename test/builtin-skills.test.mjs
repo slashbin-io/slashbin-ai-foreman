@@ -59,7 +59,7 @@ after(() => {
 
 const repo = (extra) => {
   const p = join(tmp, `cfg-${Math.random().toString(36).slice(2)}.json`);
-  writeFileSync(p, JSON.stringify({
+  writeFileSync(p, JSON.stringify({ confineSessions: false,
     repos: [{ name: "t", repoPath: repoDir, githubRepo: "example/t", featureBranch: "work", baseBranch: "trunk", ...extra }],
   }));
   return loadConfig(p).repos[0];

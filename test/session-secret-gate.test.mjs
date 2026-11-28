@@ -159,7 +159,7 @@ after(() => {
 
 const repo = () => {
   const p = join(tmp, `cfg-${Math.random().toString(36).slice(2)}.json`);
-  writeFileSync(p, JSON.stringify({ repos: [{ name: "t", repoPath: join(tmp, "repo"), githubRepo: "example/t" }] }));
+  writeFileSync(p, JSON.stringify({ confineSessions: false, repos: [{ name: "t", repoPath: join(tmp, "repo"), githubRepo: "example/t" }] }));
   return { ...loadConfig(p).repos[0], skillPath: "builtin:", revisionSkillPath: "builtin:" };
 };
 

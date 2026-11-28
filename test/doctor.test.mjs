@@ -214,7 +214,7 @@ test("session confinement: off passes without a probe; on with no working bwrap 
   writeFileSync(stub, "#!/bin/sh\nexit 0\n");
   chmodSync(stub, 0o755);
   const repos = [{ name: "a", githubRepo: "acme/a" }];
-  const off = arrange({ repos }, { "acme/a": ready() })({ AI_AGENT_CONFINE_BWRAP: "/nonexistent/bwrap" });
+  const off = arrange({ confineSessions: false, repos }, { "acme/a": ready() })({ AI_AGENT_CONFINE_BWRAP: "/nonexistent/bwrap" });
   assert.match(off.out, /^PASS  session confinement — confineSessions off/m, off.out);
   const bad = arrange({ confineSessions: true, repos }, { "acme/a": ready() })({ AI_AGENT_CONFINE_BWRAP: "/nonexistent/bwrap" });
   assert.equal(bad.status, 1, bad.out);

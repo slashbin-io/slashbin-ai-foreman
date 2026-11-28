@@ -89,7 +89,10 @@ test("no probe runs when confineSessions is off", async () => {
   assert.equal(await confineStartRefusal({ confineSessions: false }, { AI_AGENT_CONFINE_BWRAP: stub }), null);
   assert.ok(!existsSync(stubLog), "bwrap was not called");
   assert.ok(existsSync(join(homes(), "kept")), "nothing swept either");
-  assert.equal(loadConfig(configFile({})).confineSessions, false, "off by default");
+});
+
+test("confineSessions is on by default (EM#3300)", () => {
+  assert.equal(loadConfig(configFile({})).confineSessions, true);
 });
 
 for (const name of ["HOME", "CLAUDE_CONFIG_DIR", "SSH_AUTH_SOCK"]) {

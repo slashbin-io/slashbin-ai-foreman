@@ -33,7 +33,7 @@ before(() => {
   process.env.FOREMAN_GITHUB_TOKEN = "test-dummy-value-not-a-token";
   process.chdir(tmp);
   const p = join(tmp, "cfg.json");
-  writeFileSync(p, JSON.stringify({ repos: [{ name: "t", repoPath: join(tmp, "repo"), githubRepo: "example/t" }] }));
+  writeFileSync(p, JSON.stringify({ confineSessions: false, repos: [{ name: "t", repoPath: join(tmp, "repo"), githubRepo: "example/t" }] }));
   cfg = { ...loadConfig(p).repos[0], skillPath: "builtin:", revisionSkillPath: "builtin:" };
   let calls = 0;
   setCodeHost({
