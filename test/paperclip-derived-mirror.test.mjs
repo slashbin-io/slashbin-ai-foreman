@@ -350,10 +350,35 @@ test("EM#2088: the labels unread, a descriptor-less Blocked card is held (fail c
   assert.equal(fake.rows[0].status, "blocked", "a failed label read never releases an ask");
   down = false;
   const placement = mirror.placement ?? mirror.snapshotSync?.placement;
-  if (placement) {
-    await placement.loadOperatorHoldLabel(Date.now() + 10 * 60_000);
-    assert.equal(placement.operatorHold("r7"), true, "after the retry window the label is read and the card still carries it");
-  }
+  assert.ok(placement, "the mirror exposes its placement");
+  assert.equal(placement.holdLabel, "unread");
+  await placement.loadOperatorHoldLabel(Date.now() + 60_000);
+  assert.equal(placement.holdLabel, "unread", "inside the retry window the failed read is not asked again");
+  await placement.loadOperatorHoldLabel(Date.now() + 5 * 60_000 + 1);
+  assert.equal(placement.holdLabel, "L-hold", "at the retry window the recovered endpoint is read");
+  assert.equal(placement.operatorHold("r7"), true, "the card still carries the label");
+});
+
+test("EM#2088: a failed label read recovers, the label comes off, and the card moves (snapshot and live event)", async () => {
+  const fake = fakePaperclip([heldAsk()], [], HOLD_LABELS());
+  const inner = fake.fetch;
+  let down = true;
+  fake.fetch = async (url, init = {}) => (down && (init.method ?? "GET") === "GET" && new URL(url).pathname === `/api/companies/${CID}/labels`
+    ? new Response("{}", { status: 503 }) : inner(url, init));
+  const merged = [{ number: 7, labels: ["pr merged"] }];
+  const { mirror } = mirrorOn(fake, HOLD);
+  await onSnap(mirror, "example/r", snap(AT_GATE), logger());
+  assert.equal(fake.rows[0].status, "blocked");
+  down = false;
+  fake.rows[0].labelIds = ["L-pv"];
+  const placement = mirror.placement ?? mirror.snapshotSync?.placement;
+  await placement.loadOperatorHoldLabel(Date.now() + 10 * 60_000);
+  assert.equal(placement.holdLabel, "L-hold");
+  await placement.index.refreshRow("r7");
+  assert.equal(placement.operatorHold("r7"), false, "the label off and read, no operator hold");
+  assert.equal(await placement.holdOutranksLive("r7", "merged"), false, "the event may move it");
+  await onSnap(mirror, "example/r", snap(merged), logger());
+  assert.notEqual(fake.rows[0].status, "blocked", "the snapshot places it normally");
 });
 
 test("EM#2088: the operator hold outranks GitHub moving on: snapshot, a restarted mirror and a live event all keep it; the label off, it moves", async () => {

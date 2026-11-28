@@ -93,7 +93,7 @@ export class Placement {
    * it) is seen without a restart.
    */
   async loadOperatorHoldLabel(now = Date.now()): Promise<void> {
-    if (typeof this.holdLabel === "string") return;
+    if (typeof this.holdLabel === "string" && this.holdLabel !== "unread") return;
     if (this.holdLabel !== undefined && now - this.holdLabelAt < HOLD_LABEL_RETRY_MS) return;
     const name = this.env.cfg.operatorHoldLabel;
     if (!name) { this.holdLabel = null; this.holdLabelAt = now; return; }
