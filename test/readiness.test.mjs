@@ -8,7 +8,7 @@ import assert from "node:assert/strict";
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, chmodSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { parseReadiness, unmetReadiness } from "../dist/github/readiness.js";
+import { parseReadiness, unmetReadiness, readinessCheck } from "../dist/github/readiness.js";
 import { loadConfig } from "../dist/config.js";
 import { configureIssueCache } from "../dist/github.js";
 import { createLogger } from "../dist/logger.js";
@@ -300,4 +300,21 @@ test("a failed history read posts nothing", async () => {
   setState({ comments: [{ body: "x", author: { login: "alice" } }], labeled: null });
   await eligible(await connector("m"));
   assert.equal(posted().length, 0);
+});
+
+// Tech Lead review of PR 445, R1/R2: a hold that is only failed reads must not pass for a judged precondition, so the
+// stage stall stays visible while GitHub keeps failing.
+test("readinessCheck: a hold made only of failed reads is unreadable; a judged unmet predicate is not", async () => {
+  const down = () => { throw err("gh: Server Error (HTTP 500)"); };
+  const onlyFailed = await readinessCheck(P("issue_closed: o/s#5"), down);
+  assert.equal(onlyFailed.unmet.length, 1);
+  assert.equal(onlyFailed.unreadable, true, "sole issue_closed read failing is a failed read");
+  const prDown = await readinessCheck(P("pr_merged: o/s#7 base=main"), down);
+  assert.equal(prDown.unreadable, true, "sole pr_merged read failing is a failed read");
+  assert.deepEqual(await readinessCheck(P("issue_closed: o/s#5"), () => "open"), { unmet: ["issue_closed: o/s#5"], unreadable: false });
+  assert.deepEqual(await readinessCheck(P("issue_closed: o/s#5"), () => "closed"), { unmet: [], unreadable: false });
+  const mixed = parseReadiness(block("issue_closed: o/s#5", "issue_closed: o/s#6"));
+  const r = await readinessCheck(mixed, (a) => { if (a[1].endsWith("/5")) throw err("gh: Server Error (HTTP 500)"); return "open"; });
+  assert.equal(r.unmet.length, 2);
+  assert.equal(r.unreadable, false, "one judged unmet predicate makes it a real hold");
 });

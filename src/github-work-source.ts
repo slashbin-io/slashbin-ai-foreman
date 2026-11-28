@@ -17,7 +17,7 @@ import { isApprovedUnbuilt } from "./lifecycle.js";
 import { laterStageLabels } from "./github/lifecycle-scan.js";
 import { blockerRef, blockersOf, unmetBlockers } from "./github/blockers.js";
 import { acceptanceVerdict } from "./github/acceptance-gate.js";
-import { announceHold, parseReadiness, type HoldKind, readIssueBody, unmetReadiness } from "./github/readiness.js";
+import { announceHold, parseReadiness, type HoldKind, readIssueBody, readinessCheck } from "./github/readiness.js";
 import { CardReads, issueStates } from "./github/cards.js";
 import { GitHubRecordStore } from "./github/record-store.js";
 import { ghAsync } from "./github/gh.js";
@@ -756,8 +756,11 @@ export class GitHubIssueConnector implements WorkSourceAdapter {
     }
     try {
       const body = await readIssueBody(config, num);
-      const readinessUnmet = await unmetReadiness(parseReadiness(body), async (args) => await ghAsync(args, config.repoPath));
-      if (readinessUnmet.length) return { hold: `Pre-Flight readiness not met: ${readinessUnmet.join("; ")}`, announce: { kind: "readiness", reasons: readinessUnmet }, unreadable: false };
+      const readiness = await readinessCheck(parseReadiness(body), async (args) => await ghAsync(args, config.repoPath));
+      const readinessUnmet = readiness.unmet;
+      // A readiness hold that is only failed reads is not a judged precondition: the picker still holds the card, but
+      // the stage stall stays visible (Tech Lead review of PR 445, R1/R2).
+      if (readinessUnmet.length) return { hold: `Pre-Flight readiness not met: ${readinessUnmet.join("; ")}`, announce: { kind: "readiness", reasons: readinessUnmet }, unreadable: readiness.unreadable };
       const verdict = acceptanceVerdict(body);
       if (!verdict.ok) return { hold: `no acceptance script: ${verdict.reason}`, announce: { kind: "acceptance", reasons: [verdict.reason ?? "no acceptance"] }, unreadable: false };
       return { hold: null, announce: null, unreadable: false };
