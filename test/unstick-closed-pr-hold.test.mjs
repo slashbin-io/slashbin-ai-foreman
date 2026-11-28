@@ -53,7 +53,10 @@ console.log("[]");`);
   const repo = { name: "host", githubRepo: "o/host", repoPath: em, lifecycleLabels: { prMerged: "pr merged", prApproved: "pr approved", readyForProd: "ready for prod release" } };
   const config = { emRepoPath: em, sessionEnv: [], repos: [repo], unstickEscalationOwner: "owner-login", backoff: { verifyRetry: { maxAttempts: 3 }, handoff: { baseMs: 1, capMs: 1, factor: 1, maxRecalls: 1 } } };
   const rt = new ForemanRuntime();
-  for (const h of holds) assert.equal(await rt.handoffs.noteStuck(repo, ITEM, h.kind, h.reason), true);
+  for (const h of holds) {
+    if (h.tag) assert.equal(await rt.handoffs.raise(repo, { kind: h.kind, subject: ITEM, dedupeKey: h.tag, reason: h.reason }), true);
+    else assert.equal(await rt.handoffs.noteStuck(repo, ITEM, h.kind, h.reason), true);
+  }
   return {
     pass: async (i) => { dropIssueSnapshot("o/host"); await sleep(5); resetDecomposeThrottle(); const n = await tryUnstick(rt, repo, config, logger, i, { comment: () => {} }); await drainObservers(); return n; },
     calls: () => (existsSync(calls) ? readFileSync(calls, "utf8").trim().split("\n").length : 0),
@@ -104,4 +107,12 @@ test("another blocker on the issue: only the closed PR's hold is dropped, the ca
   await w.pass(1);
   assert.deepEqual(await w.questions(), [`${ITEM}:verify-held`]);
   assert.equal(w.unblocked().length, 0);
+});
+
+test("the give-up stall on the hold is not another blocker: a merged PR still unblocks the card", async () => {
+  prOpen = false;
+  const w = await world([{ kind: "revision-stalemate", reason: STALEMATE }, { kind: "stalled", tag: "handoff-gave-up", reason: "the EM handoff gave up" }]);
+  await w.pass(1);
+  assert.deepEqual(await w.questions(), []);
+  assert.equal(w.unblocked().length, 1, "one unblocked event moves the card");
 });

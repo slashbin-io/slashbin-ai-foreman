@@ -372,7 +372,10 @@ async function releaseClosedPrHolds(rt: ForemanRuntime, repoConfig: RepoConfig, 
       if (openByPr.get(pr) === false) { gone.push(key); prs.add(pr); }
     }
     if (gone.length === 0) continue;
-    const others = Object.entries(table).some(([key, e]) => !gone.includes(key) && lifecycleOf(e.kind) === "blocker");
+    // The give-up stall is derived from these holds (it opens when the EM handoff on one gives up), so it is not another
+    // blocker: counting it dropped the hold without an `unblocked`, the stall then resolved, and the card stayed Blocked.
+    const gaveUp = unstickKey(n, "stalled", "handoff-gave-up");
+    const others = Object.entries(table).some(([key, e]) => !gone.includes(key) && key !== gaveUp && lifecycleOf(e.kind) === "blocker");
     const names = [...prs].map((p) => `PR #${p}`).join(", ");
     if (others) {
       if (!await mutate(rt, repoConfig, n, (t) => { for (const key of gone) delete t[key]; })) continue;
