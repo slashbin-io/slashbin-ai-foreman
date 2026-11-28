@@ -78,7 +78,7 @@ const fixtureHost = {
   formatGhError: (e) => ({ message: String(e), stderr: "", status: 1 }),
   findDependencyPRs: (_r, _c, bases) => world.prs.filter((p) => bases.includes(p.baseRefName)),
   findOpenDependencyBatchIssue: () => openBatch()[0],
-  createDependencyBatchIssue(_r, _c, title, body, labels) {
+  createIssue(_r, _c, title, body, labels) {
     const number = world.nextIssue++;
     world.issues.push({ number, title, body, labels: (labels ?? []).map((name) => ({ name })), open: true, batch: true });
     return number;

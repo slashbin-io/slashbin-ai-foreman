@@ -105,7 +105,6 @@ export function githubCodeHost(
     isDeadBlockerReason: deadBlocker.isDeadBlockerReason,
     buildDependencyBatchIssue: dependencies.buildDependencyBatchIssue,
     createIssue: dependencies.createDependencyBatchIssue,
-    createDependencyBatchIssue: dependencies.createDependencyBatchIssue,
     dependencyBatchBases: dependencies.dependencyBatchBases,
     describeDependencyPR: dependencies.describeDependencyPR,
     fetchOpenAlertPackages: dependencies.fetchOpenAlertPackages,

@@ -55,7 +55,7 @@ export class FakeHost {
   findOpenDependencyBatchIssue() { return this.issues.find((i) => i.open); }
   describeDependencyPR = describeDependencyPR;
   buildDependencyBatchIssue = buildDependencyBatchIssue;
-  createDependencyBatchIssue(_r, _c, title, body, labels) {
+  createIssue(_r, _c, title, body, labels) {
     if (this.ghFails) return null;
     const number = this.nextIssue++;
     this.issues.push({ number, title, body, labels, open: true });

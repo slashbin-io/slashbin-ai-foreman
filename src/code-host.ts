@@ -505,7 +505,6 @@ export interface CodeHost {
     body: string;
 };
   createIssue(repo: string, cwd: string, title: string, body: string, labels: string[], logger?: Logger): Promise<number | null>;
-  createDependencyBatchIssue(repo: string, cwd: string, title: string, body: string, labels: string[], logger?: Logger): Promise<number | null>;
   dependencyBatchBases(baseBranch: string | undefined, productionBranch: string, legacyFeatureBranch?: string): string[];
   describeDependencyPR(number: number, title: string, body?: string): DependencyChange;
   fetchOpenAlertPackages(repo: string, cwd: string): Promise<Set<string>>;
