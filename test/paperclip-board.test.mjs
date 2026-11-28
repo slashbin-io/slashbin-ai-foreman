@@ -56,6 +56,17 @@ test("assigneeFor: an unset humanUserId leaves both null, never the Foreman's ag
   assert.deepEqual(assigneeFor({ agentId: "fm" }, { labels: ["approved-for-human"], repo: "acme/svc" }), { assigneeAgentId: null, assigneeUserId: null });
 });
 
+test("assigneeFor: personHoldLabels assign a blocked item to the first matching label's user, and only when blocked", () => {
+  const cfg = { agentId: "fm", personHoldLabels: { "waiting-on-alice": "alice-user", "waiting-on-bob": "bob-user" } };
+  const r = (labels, blocked) => assigneeFor(cfg, { labels, repo: "acme/svc", blocked });
+  assert.deepEqual(r(["blocked", "waiting-on-bob"], true), { assigneeAgentId: null, assigneeUserId: "bob-user" });
+  assert.deepEqual(r(["waiting-on-bob", "waiting-on-alice"], true), { assigneeAgentId: null, assigneeUserId: "alice-user" });
+  assert.equal(r(["blocked"], true), undefined);
+  assert.equal(r(["waiting-on-alice"], false), undefined);
+  assert.equal(r(["waiting-on-alice"], undefined), undefined);
+  assert.equal(assigneeFor({ agentId: "fm" }, { labels: ["waiting-on-alice"], repo: "a/b", blocked: true }), undefined);
+});
+
 test("assigneeFor: two identical calls return equal results", () => {
   const cfg = { agentId: "fm", humanUserId: "alice-user" };
   for (const item of [{ labels: ["approved-for-human"], repo: "a/b" }, { labels: [], repo: "acme/slashbin-engineering-manager" }, { labels: [], repo: "a/b" }]) {
