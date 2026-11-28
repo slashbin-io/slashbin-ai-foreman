@@ -422,3 +422,50 @@ test("an approved card queued behind a build in the same repo opens no stall, an
   const held = planStageStalls(new Map([[1, "prodVerifyHeld"], [3, "inReview"]]), new Map([[1, undefined], [3, undefined]]), new Map(), [], "o/host");
   assert.deepEqual(held.report.map((r) => [r.issue, r.rule.cause]), [[1, "stage-prod-verify-held"]], "only approved cards queue");
 });
+
+// The board cannot show a build in flight: the card being built keeps `approved` until its PR is labelled (Tech Lead
+// review of PR 441, R1-R4). The unstick pass reads the picker's own occupancy instead.
+import { codeHost as realCodeHost, setCodeHost as setHost } from "../dist/plugins/registry.js";
+
+async function withFeaturePr(pr, body) {
+  const real = realCodeHost();
+  setHost(new Proxy(real, { get: (t, k) => (k === "findOpenFeaturePR" ? async () => pr() : Reflect.get(t, k)) }));
+  try { await body(); } finally { setHost(null); }
+}
+
+test("an approved card behind a build in flight (both cards still approved on the board) opens no stall; a live one resolves and its clock restarts once the build is free", async () => {
+  const w = world();
+  writeFileSync(openFile, '[{"number":1,"title":"t","labels":[]},{"number":3,"title":"t","labels":[]}]');
+  await withFeaturePr(() => null, () => withStages(() => ({ 1: "approved", 3: "approved" }), async () => {
+    await w.pass(1);
+    const first = await w.stall(1, "stage-approved");
+    assert.equal(first.state, "open", "build free: the clock runs");
+    w.rt.builds.started(w.repo.name); // #3's implement session claims the build; the board still shows approved
+    await w.pass(2);
+    assert.equal((await w.stall(1, "stage-approved")).state, "resolved", "R2: a live stall on a queued card resolves");
+    assert.equal((await w.stall(3, "stage-approved")).state, "resolved", "the card being built is not stalled either");
+    await w.pass(3);
+    assert.equal((await w.stall(1, "stage-approved")).state, "resolved", "R1: no stall reopens while the build is taken");
+    w.rt.builds.ended(w.repo.name);
+    await w.pass(4);
+    const fresh = await w.stall(1, "stage-approved");
+    assert.equal(fresh.state, "open", "R3: the build free, the clock starts again");
+    assert.notEqual(fresh.startedAt, first.startedAt, "R3: a fresh clock, not the old start");
+  }));
+});
+
+test("an open feature PR holds the build: approved cards behind it open no stall; a failed PR read is not occupancy", async () => {
+  const w = world();
+  writeFileSync(openFile, '[{"number":1,"title":"t","labels":[]}]');
+  let pr = () => ({ number: 73, issueNumbers: [9] });
+  await withFeaturePr(() => pr(), () => withStages(() => ({ 1: "approved" }), async () => {
+    await w.pass(1);
+    assert.equal(await w.stall(1, "stage-approved"), undefined, "queued behind PR #73");
+    pr = () => { throw new Error("gh down"); };
+    await w.pass(2);
+    assert.equal((await w.stall(1, "stage-approved")).state, "open", "an unreadable PR still stalls");
+    pr = () => null;
+    await w.pass(3);
+    assert.equal((await w.stall(1, "stage-approved")).state, "open", "no PR: the clock keeps running");
+  }));
+});

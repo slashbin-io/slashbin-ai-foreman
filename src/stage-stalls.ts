@@ -14,6 +14,8 @@
 // An approved card is queued, not stalled, while another card of the same repo holds the build: it is being built,
 // its PR is open under review, or it waits on its revision (`BUILD_STAGES`). The Foreman builds a repo one feature
 // PR at a time, so the queue behind it is the stage's meaning ("queued behind an open feature PR"), not a fault.
+// The board alone cannot say so (a card being built keeps `approved` until its PR is labelled), so the unstick pass
+// also passes the picker's own read: a build session in flight for the repo, or its open feature PR.
 // The stall opens on the first pass that sees the build free and the card still approved, and a stall already open
 // on a card that is now queued resolves (2026-11-28: an S2 card behind ten approved S0 cards while
 // a PR was in review, was raised as a Foreman fault).
@@ -83,7 +85,9 @@ export interface StageStallPlan {
 /**
  * What one pass does. `stages`: the open lifecycle cards' stages. `open`: the readable open cards' stalls. `closed`:
  * the readable stalls of indexed cards no longer open. `unreadable`: indexed cards whose record could not be read,
- * left alone and kept in the index for the next pass. Pure.
+ * left alone and kept in the index for the next pass. `buildOccupied`: the picker's own read that the repo's build is
+ * taken (a build session running, or an open feature PR), which the board cannot show: a building card keeps its
+ * `approved` label until its PR is labelled. Pure.
  */
 export function planStageStalls(
   stages: ReadonlyMap<number, StageOrDone>,
@@ -91,6 +95,7 @@ export function planStageStalls(
   closed: ReadonlyMap<number, Partial<Record<StallCause, StallRecord>> | undefined>,
   unreadable: Iterable<number>,
   repo: string,
+  buildOccupied = false,
 ): StageStallPlan {
   const plan: StageStallPlan = { report: [], resolve: [], index: [] };
   const index = new Set<number>(unreadable);
@@ -105,7 +110,7 @@ export function planStageStalls(
     const m = /^(.+)#(\d+)$/.exec(a);
     if (m && m[1].toLowerCase() === repo.toLowerCase()) named.add(Number(m[2]));
   }
-  const building = [...stages.values()].some((s) => BUILD_STAGES.has(s));
+  const building = buildOccupied || [...stages.values()].some((s) => BUILD_STAGES.has(s));
   for (const [issue, cardStalls] of open) {
     const stage = stages.get(issue);
     const queued = stage === "approved" && building;
