@@ -9,6 +9,7 @@
 //
 // Shared with the EM's escalation unblock conditions (EM#649): one parser.
 
+import { memoRead } from "../read-memo.js";
 import type { RepoConfig } from "../config.js";
 import { formatGhError } from "./cache.js";
 import { commentOnIssue } from "./ci-gate.js";
@@ -279,7 +280,7 @@ export async function announceHold(config: RepoConfig, num: number, kind: HoldKi
 /** The state of issue `num` in `repo`, live: "open", "closed", or null when it cannot be read. */
 export async function readIssueState(config: RepoConfig, repo: string, num: number): Promise<"open" | "closed" | null> {
   try {
-    const s = (await ghAsync(["api", `repos/${repo}/issues/${num}`, "--jq", ".state"], config.repoPath)).trim();
+    const s = (await memoRead(`issuestate:${repo}#${num}`, () => ghAsync(["api", `repos/${repo}/issues/${num}`, "--jq", ".state"], config.repoPath))).trim();
     return s === "open" || s === "closed" ? s : null;
   } catch {
     return null;
@@ -288,5 +289,5 @@ export async function readIssueState(config: RepoConfig, repo: string, num: numb
 
 /** The issue body, live. Throws on a gh failure. */
 export async function readIssueBody(config: RepoConfig, num: number): Promise<string> {
-  return await ghAsync(["api", `repos/${config.githubRepo}/issues/${num}`, "--jq", ".body // \"\""], config.repoPath);
+  return await memoRead(`issuebody:${config.githubRepo}#${num}`, () => ghAsync(["api", `repos/${config.githubRepo}/issues/${num}`, "--jq", ".body // \"\""], config.repoPath));
 }

@@ -7,6 +7,7 @@ import { ghResource, recordGhCall, type GhResource } from "../gh-usage.js";
 import { isUpstreamBlocked, setUpstreamProbe, signalUpstreamLimit, UpstreamBackoffError, type UpstreamProbeResult } from "../upstream-backoff.js";
 import { formatGhError, invalidateSnapshotIfMutating } from "./cache.js";
 import { backoffDelay, backoffSettings } from "../backoff.js";
+import { setBudgetReader, type BudgetReading } from "../gh-budget.js";
 
 
 
@@ -187,3 +188,21 @@ export async function probeGitHub(trip: { token?: string; resource?: GhResource 
 // Every gh call that can trip the GitHub back-off runs through this module, so it
 // is loaded whenever a GitHub window can end.
 setUpstreamProbe("github", probeGitHub);
+
+/**
+ * The Foreman token's remaining GraphQL and core quota, from GitHub's `rate_limit` endpoint, which does not count
+ * against the limit (https://docs.github.com/en/rest/rate-limit/rate-limit). Spawned directly, like the probe:
+ * it must work while the back-off refuses `runGhAsync`, and it is not usage.
+ */
+export async function readBudget(): Promise<BudgetReading> {
+  const token = process.env.FOREMAN_GITHUB_TOKEN;
+  const env = token ? { ...process.env, GH_TOKEN: token } : { ...process.env };
+  const { stdout } = await execFileAsync("gh", ["api", "rate_limit"], { encoding: "utf-8", timeout: 30_000, env });
+  const res = JSON.parse(stdout)?.resources ?? {};
+  const pick = (b: { remaining?: unknown; limit?: unknown; reset?: unknown } | undefined) =>
+    typeof b?.remaining === "number" && typeof b.limit === "number"
+      ? { remaining: b.remaining, limit: b.limit, ...(typeof b.reset === "number" ? { reset: b.reset } : {}) }
+      : undefined;
+  return { graphql: pick(res.graphql), core: pick(res.core) };
+}
+setBudgetReader(readBudget);

@@ -13,6 +13,8 @@ import { configureBackoff } from "./backoff.js";
 import { configureRunner } from "./refusal.js";
 import { configureUpstreamBackoff, isUpstreamBlocked, whenUpstreamClear, UpstreamBackoffError } from "./upstream-backoff.js";
 import { configureGhUsage } from "./gh-usage.js";
+import { BudgetGuard } from "./gh-budget.js";
+import { configureReadMemo } from "./read-memo.js";
 import type { ForemanRuntime } from "./runtime.js";
 import { startEventLoopMonitor } from "./event-loop-delay.js";
 import { checkKindContract } from "./unstick-contract.js";
@@ -109,6 +111,10 @@ export function startDaemon(rt: ForemanRuntime, config: AgentConfig, logger: Log
   // One info line per hour: spawned gh calls by quota bucket and subcommand.
   // statePoints: what the fleet state's bulk queries actually cost, as GitHub reported it.
   configureGhUsage({ intervalMs: 3_600_000, logger, extra: () => host.takeStateUsage() });
+  // Lanes and stages that ask GitHub the same question within one pass share one answer (src/read-memo.ts); half
+  // a poll interval at most, so a change is still read by the next pass.
+  configureReadMemo(Math.min(30_000, Math.floor(config.pollIntervalMs / 2)));
+  const budget = new BudgetGuard(logger);
 
   // A TTL at or above the poll interval means a cycle can be served entirely
   // from the previous cycle's snapshot, so an externally-applied `approved`
@@ -229,12 +235,17 @@ export function startDaemon(rt: ForemanRuntime, config: AgentConfig, logger: Log
     let wake: (() => void) | null = null;
     const key = loopKey(repoName, laneName);
     // Sleep this lane's own interval; stop() wakes it.
+    // An idle lane's nap is stretched while the GitHub budget is under its reserve (src/gh-budget.ts); a pass
+    // that did work never naps, so work is never slowed.
     const nap = (): Promise<void> => new Promise<void>((resolve) => {
       wake = resolve;
-      setTimeout(() => {
-        wake = null;
-        resolve();
-      }, laneIntervalMs(activeConfig, laneName));
+      void budget.factor().catch(() => 1).then((factor) => {
+        if (wake !== resolve) return; // stop() already woke it
+        setTimeout(() => {
+          wake = null;
+          resolve();
+        }, Math.round(laneIntervalMs(activeConfig, laneName) * factor));
+      });
     });
 
     const run = async (): Promise<void> => {

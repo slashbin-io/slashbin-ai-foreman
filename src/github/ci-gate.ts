@@ -4,6 +4,7 @@ import type { RepoConfig } from "../config.js";
 import type { Logger } from "../logger.js";
 import { ghAsync } from "./gh.js";
 import { byReviewer } from "./review-freshness.js";
+import { memoRead } from "../read-memo.js";
 import { backoffSettings } from "../backoff.js";
 import type { CheckRollupEntry, CheckVerdict } from "../code-host.js";
 export type { CheckRollupEntry, CheckVerdict } from "../code-host.js";
@@ -71,7 +72,8 @@ export async function getPRCheckVerdict(config: RepoConfig, prNumber: number, lo
  */
 export async function getContextVerdict(config: RepoConfig, prNumber: number, context: string, logger: Logger): Promise<CheckVerdict> {
   try {
-    const raw = await ghAsync(["pr", "view", String(prNumber), "--repo", config.githubRepo, "--json", "statusCheckRollup"], config.repoPath);
+    // One read per memo window however many issues ride this release PR: each issue's pass asked it again.
+    const raw = await memoRead(`rollup:${config.githubRepo}#${prNumber}`, () => ghAsync(["pr", "view", String(prNumber), "--repo", config.githubRepo, "--json", "statusCheckRollup"], config.repoPath));
     const data = JSON.parse(raw || "{}") as { statusCheckRollup?: CheckRollupEntry[] };
     return summarizeCheckRollup((data.statusCheckRollup ?? []).filter((e) => (e.context ?? e.name) === context));
   } catch (err) {

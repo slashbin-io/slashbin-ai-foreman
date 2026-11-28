@@ -1,7 +1,7 @@
 // Branch state: the post-implement self-check, remote heads, and branch-drift sync PRs.
 
 import type { Logger } from "../logger.js";
-import { findOpenPrs, formatGhError } from "./cache.js";
+import { findOpenPrs, formatGhError, knownNoOpenPrs } from "./cache.js";
 import { syncBranchName } from "../foreman-branch.js";
 import { ghAsync, ghAsTechLeadAsync, ghHttpStatus, isBackoffRefusal } from "./gh.js";
 import { DEFAULT_GITHUB_CONVENTIONS, fillTitle, signed, type GithubConventions } from "./conventions.js";
@@ -389,6 +389,12 @@ async function updateBehindBranch(repo: string, prNumber: number, cwd: string, l
  * warning. Sync PRs are out of scope: `tryMergeSyncPR` owns them. Returns the PRs it updated.
  */
 export async function sweepOpenPrStates(repo: string, baseBranch: string, productionBranch: string, cwd: string, logger?: Logger): Promise<number[]> {
+  // The fleet state already reads every repo's open PRs in bulk: a repo it says has none has nothing to sweep, and
+  // asking GitHub for an empty list was 2,087 GraphQL calls an hour (2026-11-28). A repo with PRs still reads live.
+  if (await knownNoOpenPrs(repo).catch(() => false)) {
+    for (const key of [...refusals.keys()]) if (key.startsWith(`${repo}#`)) refusals.delete(key);
+    return [];
+  }
   const out = await ghAsync(["pr", "list", "--repo", repo, "--state", "open", "--base", baseBranch, "--json", "number,headRefName,isDraft,mergeStateStatus", "--limit", "100"], cwd);
   const prs: { number: number; headRefName: string; isDraft: boolean; mergeStateStatus: string }[] = JSON.parse(out || "[]");
   const syncHeads = new Set([syncBranchName(productionBranch, baseBranch), productionBranch]);

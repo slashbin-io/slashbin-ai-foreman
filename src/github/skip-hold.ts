@@ -7,6 +7,7 @@
 // and every expiry bought a full session to rediscover the same answer. A held
 // issue runs again only when something it waits on actually moves.
 
+import { memoRead } from "../read-memo.js";
 import { ghAsync } from "./gh.js";
 import type { WaitingOn, RefState, IssueActivity, HoldReads, HeldEntry, SkipGate } from "../code-host.js";
 export type { WaitingOn, RefState, IssueActivity, HoldReads, HeldEntry, SkipGate } from "../code-host.js";
@@ -42,7 +43,7 @@ export function heldReason(reason: string, repo: string, ref?: WaitingOn, refIsP
 
 /** The reference's state: one read. Throws on a gh failure. */
 export async function refState(ref: WaitingOn, cwd: string): Promise<RefState> {
-  const raw = await ghAsync(["api", `repos/${ref.repo}/issues/${ref.number}`, "--jq", "{state, pr: (.pull_request != null), merged: (.pull_request.merged_at != null)}"], cwd);
+  const raw = await memoRead(`refstate:${ref.repo}#${ref.number}`, () => ghAsync(["api", `repos/${ref.repo}/issues/${ref.number}`, "--jq", "{state, pr: (.pull_request != null), merged: (.pull_request.merged_at != null)}"], cwd));
   const s = JSON.parse(raw) as { state: string; pr: boolean; merged: boolean };
   return { open: s.state !== "closed", isPr: s.pr, merged: s.merged };
 }

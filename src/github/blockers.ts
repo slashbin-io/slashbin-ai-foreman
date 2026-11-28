@@ -8,6 +8,7 @@
 // skill happened to pick it first. Order is now a GitHub issue dependency
 // ("blocked by"), a structured link, read here — never parsed out of prose.
 
+import { memoRead } from "../read-memo.js";
 import type { LifecycleLabels } from "../config.js";
 import { ghAsync } from "./gh.js";
 
@@ -44,5 +45,5 @@ export function blockerRef(b: Blocker, repo: string): string {
 
 /** Every issue recorded as blocking `issue`. Throws on a gh failure. */
 export async function blockersOf(repo: string, issue: number, cwd: string): Promise<Blocker[]> {
-  return JSON.parse(await ghAsync(["api", `repos/${repo}/issues/${issue}/dependencies/blocked_by`], cwd) || "[]");
+  return JSON.parse(await memoRead(`blocked_by:${repo}#${issue}`, () => ghAsync(["api", `repos/${repo}/issues/${issue}/dependencies/blocked_by`], cwd)) || "[]");
 }
